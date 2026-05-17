@@ -1801,14 +1801,20 @@ async function renderBidQuote(main) {
   tbl.append(tbody);
   main.append(tbl);
 
-  // Pre-populate from existing quote lines or from rate sheet
+  // Pre-populate from existing quote lines, or seed just the two most-common
+  // classifications (foreman + journeyman). Other classes are one click away
+  // via "Add Row" — pre-loading every rate-sheet row created rows users had to delete.
+  const DEFAULT_BID_CLASSES=['foreman','journeyman'];
   const existingLines=bid.quote_lines||[];
-  const lines=existingLines.length>0?existingLines:rates.map(r=>({
-    classification:r.classification,
-    personnel:r.classification.toLowerCase().includes('foreman')?1:0,
-    st_hours:0,ot_hours:0,dt_hours:0,
-    st_rate:r.st_rate,ot_rate:r.ot_rate,dt_rate:r.dt_rate
-  }));
+  const lines=existingLines.length>0?existingLines:DEFAULT_BID_CLASSES
+    .map(target=>rates.find(r=>r.classification.toLowerCase()===target))
+    .filter(Boolean)
+    .map(r=>({
+      classification:r.classification,
+      personnel:1,
+      st_hours:0,ot_hours:0,dt_hours:0,
+      st_rate:r.st_rate,ot_rate:r.ot_rate,dt_rate:r.dt_rate
+    }));
 
   // If no rates and no existing lines, start with one empty row
   if(lines.length===0) lines.push({classification:'',personnel:1,st_hours:0,ot_hours:0,dt_hours:0,st_rate:0,ot_rate:0,dt_rate:0});
