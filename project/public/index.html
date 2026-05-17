@@ -2005,12 +2005,11 @@ async function renderBidQuote(main) {
     // 80 man-hours → 10 person-days → 5 calendar days. Without the
     // /personnel factor the warning fired (and would have continued
     // firing as personnel scaled up). Now compares calendar-to-calendar.
-    // Allow ±20% or ±2 days wiggle room (whichever is larger) since
-    // crews sometimes work 10h days (under-stated days) or short days
-    // for safety meetings (over-stated days).
+    // Tolerance is a flat ±1 day — anything further off is worth
+    // flagging.
     const effectivePersonnel = totalPersonnel > 0 ? totalPersonnel : 1;
     const expectedDays = totalManHours / (effectivePersonnel * 8);
-    const tolerance = Math.max(2, expectedDays * 0.2);
+    const tolerance = 1;
     const mismatch = days > 0 && totalManHours > 0 && Math.abs(days - expectedDays) > tolerance;
 
     const warnEl = $('#bq-length-warn');
