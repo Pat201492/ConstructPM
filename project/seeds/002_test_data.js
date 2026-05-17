@@ -326,7 +326,7 @@ exports.seed = async function (knex) {
     description: 'Replace 480V switchgear lineup, including breakers and bus bar.',
     start_date: '2026-05-11',
     project_length_days: 4,   // working days — Mon-Thu of week 1
-    total_personnel: 5,
+    manpower: 5,
     fully_staffed: false,
   }).returning('*');
   await knex('project_numbers').insert([
@@ -350,7 +350,7 @@ exports.seed = async function (knex) {
     description: 'Rough-in lighting and receptacles for new hospital wing C.',
     start_date: '2026-05-12',
     project_length_days: 12,  // working days — ~2.5 weeks M-F
-    total_personnel: 8,
+    manpower: 8,
     fully_staffed: false,
   }).returning('*');
   await knex('project_numbers').insert([
