@@ -5341,7 +5341,7 @@ async function renderSchedulerByWorker(main) {
   // Header: weekday + date (clickable to sort)
   const thead = h('thead');
   const trDows = h('tr');
-  trDows.append(h('th',{style:'position:sticky;left:0;background:var(--bg3);min-width:160px;padding:4px 8px;text-align:left;z-index:2'},'Worker'));
+  trDows.append(h('th',{style:'position:sticky;left:0;background:var(--bg3);width:110px;min-width:110px;max-width:110px;padding:4px 8px;text-align:left;z-index:2'},'Worker'));
   dayCols.forEach(d => {
     trDows.append(h('th',{style:`
       background:var(--bg3);
@@ -5420,9 +5420,9 @@ async function renderSchedulerByWorker(main) {
 
   sortedWorkers.forEach(w => {
     const tr = h('tr',{style:'border-top:1px solid var(--border)'});
-    const nameCell = h('td',{style:`position:sticky;left:0;background:var(--bg2);padding:6px 8px;font-weight:500;${rowBase};z-index:1`});
-    nameCell.append(h('div',{}, w.first_name + ' ' + w.last_name));
-    nameCell.append(h('div',{style:'font-size:10px;color:var(--text3)'}, (w.role || '').replace(/_/g,' ')));
+    const nameCell = h('td',{style:`position:sticky;left:0;background:var(--bg2);padding:6px 8px;font-weight:500;width:110px;min-width:110px;max-width:110px;font-size:12px;${rowBase};z-index:1`});
+    nameCell.append(h('div',{style:'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'}, w.first_name + ' ' + w.last_name));
+    nameCell.append(h('div',{style:'font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis'}, (w.role || '').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())));
     tr.append(nameCell);
 
     const dateMap = byWorkerByDate.get(w.id) || new Map();

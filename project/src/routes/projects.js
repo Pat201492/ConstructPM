@@ -18,6 +18,21 @@ const { ROLES } = require('../config/roles');
 
 const db = require('../config/database');
 
+// pg returns DATE columns as JS Date objects. `String(date).slice(0, 10)`
+// gives "Mon May 11" rather than "2026-05-11" — the bug Pat hit when
+// Copy-Day reported "source_date is not a working day" on a valid date.
+// Use this helper for any DATE column we want as YYYY-MM-DD downstream.
+function ymd(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    const m = String(v.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(v.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -331,7 +346,7 @@ router.get('/scheduled-list', authorize('projects:read'), async (req, res, next)
         .select('project_id', 'work_date');
       const byProject = new Map();
       for (const r of fsRows) {
-        const key = String(r.work_date).slice(0, 10);
+        const key = ymd(r.work_date);
         if (!byProject.has(r.project_id)) byProject.set(r.project_id, new Set());
         byProject.get(r.project_id).add(key);
       }
@@ -789,7 +804,7 @@ router.post('/:id/assignments/copy-day', authorize('projects:update'), async (re
     const overrides = await db('project_schedule_overrides').where('project_id', project.id).first() || {};
 
     // Compute working days — same logic the frontend uses for the calendar
-    const startStr = String(project.start_date).slice(0, 10);
+    const startStr = ymd(project.start_date);
     const [sy, sm, sd] = startStr.split('-').map(Number);
     const start = new Date(sy, sm - 1, sd);
     const length = project.project_length_days;
