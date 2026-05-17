@@ -468,14 +468,15 @@ router.get('/me/recents', async (req, res, next) => {
       .orderBy('last_used', 'desc')
       .limit(25);
 
-    // Recent vendors — from this user's purchase orders
-    const vendors = await db('vendors')
-      .select('vendors.id', 'vendors.name',
+    // Recent vendors — from this user's purchase orders. After the
+    // vendors->customers merge, vendor rows live in the customers table.
+    const vendors = await db('customers')
+      .select('customers.id', 'customers.name',
         db.raw('MAX(purchase_orders.created_at) as last_used'))
-      .leftJoin('purchase_orders', 'purchase_orders.vendor_id', 'vendors.id')
+      .leftJoin('purchase_orders', 'purchase_orders.vendor_id', 'customers.id')
       .where('purchase_orders.created_by', userId)
-      .where('vendors.active', true)
-      .groupBy('vendors.id', 'vendors.name')
+      .where('customers.active', true)
+      .groupBy('customers.id', 'customers.name')
       .orderBy('last_used', 'desc')
       .limit(25);
 

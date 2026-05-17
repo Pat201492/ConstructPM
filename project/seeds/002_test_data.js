@@ -568,16 +568,32 @@ exports.seed = async function (knex) {
   console.log('  ✅ Foremen assigned to projects (Carlos: 1+2, Danny: 3+4, Tyrell: 1+4)');
 
   // ═══════════════════════════════════════════════════════════
-  // VENDORS — central vendor list for outbound POs
+  // VENDOR COMPANIES — after the vendors->customers merge, vendor
+  // companies are seeded as customer rows with their contact info as
+  // customer_contacts. PO.vendor_id points at the customers table.
   // ═══════════════════════════════════════════════════════════
-  const vendorList = await knex('vendors').insert([
-    { name: 'Grainger Industrial Supply', contact_name: 'Jim Hawkins', email: 'orders@grainger.example', phone: '555-0100', street: '100 Grainger Pkwy', town: 'Lake Forest', state: 'IL', zip: '60045' },
-    { name: 'Graybar Electric', contact_name: 'Maria Lopez', email: 'sales@graybar.example', phone: '555-0200', street: '200 Industrial Way', town: 'Newark', state: 'NJ', zip: '07102' },
-    { name: 'Home Depot Pro', contact_name: 'Steve Park', email: 'pro@hdpro.example', phone: '555-0300', street: '2455 Paces Ferry Rd', town: 'Atlanta', state: 'GA', zip: '30339' },
-    { name: 'Local Electrical Supply Co', contact_name: 'Tom Bryant', email: 'tom@localesco.example', phone: '555-0400', street: '88 Main St', town: 'Edison', state: 'NJ', zip: '08837' },
-    { name: 'Northeast Conduit', contact_name: 'Sarah Liu', email: 'orders@neconduit.example', phone: '555-0500', street: '450 Industrial Dr', town: 'Bayonne', state: 'NJ', zip: '07002' },
-  ]).returning('*');
-  console.log(`  ✅ ${vendorList.length} vendors`);
+  const vendorSeed = [
+    { name: 'Grainger Industrial Supply', contact_name: 'Jim Hawkins',  email: 'orders@grainger.example', phone: '555-0100', street: '100 Grainger Pkwy', town: 'Lake Forest', state: 'IL', zip: '60045' },
+    { name: 'Graybar Electric',           contact_name: 'Maria Lopez',  email: 'sales@graybar.example',   phone: '555-0200', street: '200 Industrial Way', town: 'Newark', state: 'NJ', zip: '07102' },
+    { name: 'Home Depot Pro',             contact_name: 'Steve Park',   email: 'pro@hdpro.example',       phone: '555-0300', street: '2455 Paces Ferry Rd', town: 'Atlanta', state: 'GA', zip: '30339' },
+    { name: 'Local Electrical Supply Co', contact_name: 'Tom Bryant',   email: 'tom@localesco.example',   phone: '555-0400', street: '88 Main St', town: 'Edison', state: 'NJ', zip: '08837' },
+    { name: 'Northeast Conduit',          contact_name: 'Sarah Liu',    email: 'orders@neconduit.example', phone: '555-0500', street: '450 Industrial Dr', town: 'Bayonne', state: 'NJ', zip: '07002' },
+  ];
+  const vendorCompanies = await knex('customers').insert(vendorSeed.map(v => ({
+    name: v.name,
+    billing_street: v.street,
+    billing_town: v.town,
+    billing_state: v.state,
+    billing_zip: v.zip,
+  }))).returning('*');
+  await knex('customer_contacts').insert(vendorCompanies.map((c, i) => ({
+    customer_id: c.id,
+    name: vendorSeed[i].contact_name,
+    email: vendorSeed[i].email,
+    phone: vendorSeed[i].phone,
+    company: c.name,
+  })));
+  console.log(`  ✅ ${vendorCompanies.length} vendor companies seeded into customers`);
 
   // ═══════════════════════════════════════════════════════════
   // INVENTORY — consumable stock

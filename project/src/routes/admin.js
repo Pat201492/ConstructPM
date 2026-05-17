@@ -498,9 +498,8 @@ router.get('/import/targets', async (req, res, next) => {
       customers: ['name', 'billing_street', 'billing_town', 'billing_state', 'billing_zip'],
       customer_contacts: ['name', 'email', 'phone', 'company', 'customer_id'],
       locations: ['name', 'street', 'town', 'state', 'zip', 'local_union', 'miles_from_hq', 'location_code'],
-      // Vendors mirror the Customers shape on the Tables tab — same kind
-      // of reference data, so they belong in the importable list too.
-      vendors: ['name', 'contact_name', 'email', 'phone', 'street', 'town', 'state', 'zip', 'notes'],
+      // Vendors merged into customers — bulk-import vendor companies via
+      // the 'customers' target; vendor contact info via 'customer_contacts'.
       rate_sheet: ['local_union', 'classification', 'st_rate', 'ot_rate', 'dt_rate'],
       equipment: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_subtype', 'equipment_cost', 'certification_date', 'serial_number', 'notes'],
       inventory: ['item_name', 'category', 'sku', 'quantity', 'unit', 'min_stock', 'unit_cost', 'location'],
@@ -524,7 +523,7 @@ router.post('/import', authorize('admin:bulk_import'), async (req, res, next) =>
       return res.status(400).json({ error: 'target and rows array required' });
     }
 
-    const allowedTargets = ['customers', 'customer_contacts', 'locations', 'vendors', 'rate_sheet', 'equipment', 'inventory', 'users'];
+    const allowedTargets = ['customers', 'customer_contacts', 'locations', 'rate_sheet', 'equipment', 'inventory', 'users'];
     if (!allowedTargets.includes(target)) {
       return res.status(400).json({ error: `Invalid target. Allowed: ${allowedTargets.join(', ')}` });
     }

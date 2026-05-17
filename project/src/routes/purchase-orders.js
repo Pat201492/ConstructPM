@@ -22,11 +22,11 @@ router.get('/', authorize('purchase_orders:read'), async (req, res, next) => {
   try {
     const { project_id, status } = req.query;
     let q = db('purchase_orders')
-      .leftJoin('vendors', 'purchase_orders.vendor_id', 'vendors.id')
+      .leftJoin('customers', 'purchase_orders.vendor_id', 'customers.id')
       .leftJoin('users', 'purchase_orders.created_by', 'users.id')
       .select(
         'purchase_orders.*',
-        'vendors.name as vendor_name',
+        'customers.name as vendor_name',
         db.raw("users.first_name || ' ' || users.last_name as created_by_name")
       )
       .orderBy('purchase_orders.created_at', 'desc');
@@ -45,8 +45,8 @@ router.get('/', authorize('purchase_orders:read'), async (req, res, next) => {
 router.get('/:id', authorize('purchase_orders:read'), [param('id').isUUID()], async (req, res, next) => {
   try {
     const po = await db('purchase_orders')
-      .leftJoin('vendors', 'purchase_orders.vendor_id', 'vendors.id')
-      .select('purchase_orders.*', 'vendors.name as vendor_name')
+      .leftJoin('customers', 'purchase_orders.vendor_id', 'customers.id')
+      .select('purchase_orders.*', 'customers.name as vendor_name')
       .where('purchase_orders.id', req.params.id)
       .first();
     if (!po) return res.status(404).json({ error: 'PO not found' });
