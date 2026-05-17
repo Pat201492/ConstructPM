@@ -1,0 +1,24 @@
+{
+  "cli": { "version": ">= 12.0.0" },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": { "simulator": false },
+      "android": { "buildType": "apk" }
+    },
+    "production": {
+      "ios": { "autoIncrement": true },
+      "android": { "autoIncrement": true }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": { "appleId": "your-apple-id@example.com", "ascAppId": "YOUR_APP_STORE_CONNECT_ID" },
+      "android": { "serviceAccountKeyPath": "./google-play-key.json" }
+    }
+  }
+}

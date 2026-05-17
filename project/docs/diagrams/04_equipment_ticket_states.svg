@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="400" viewBox="0 0 680 400" role="img" font-family="Arial, Helvetica, sans-serif">
+<title>Equipment ticket state machine</title>
+<desc>Ticket states: open, filled, picked up, archived. Edits revert filled back to open; pickup archives and deletes live rows; reconfirm regenerates the PDF without archiving.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<rect x="50" y="50" width="150" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="125" y="74" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Open</text>
+<text x="125" y="92" text-anchor="middle" font-size="12" fill="#5F5E5A">created, awaiting fill</text>
+
+<text x="285" y="68" text-anchor="middle" font-size="12" fill="#5F5E5A">fill (scan)</text>
+<line x1="200" y1="78" x2="368" y2="78" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="370" y="50" width="150" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="445" y="74" text-anchor="middle" font-size="14" font-weight="500" fill="#0C447C">Filled</text>
+<text x="445" y="92" text-anchor="middle" font-size="12" fill="#185FA5">scanned list attached</text>
+
+<path d="M445 106 L445 160 L125 160 L125 108" fill="none" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="285" y="152" text-anchor="middle" font-size="12" fill="#5F5E5A">edit add/remove — unpicks</text>
+
+<text x="540" y="150" text-anchor="middle" font-size="12" fill="#5F5E5A">pickup</text>
+<line x1="445" y1="106" x2="445" y2="200" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="350" y="200" width="190" height="64" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="445" y="224" text-anchor="middle" font-size="14" font-weight="500" fill="#04342C">Picked up</text>
+<text x="445" y="244" text-anchor="middle" font-size="12" fill="#0F6E56">equip loc to project, PDF</text>
+<line x1="445" y1="264" x2="445" y2="300" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="330" y="300" width="230" height="64" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="445" y="324" text-anchor="middle" font-size="14" font-weight="500" fill="#26215C">Archived</text>
+<text x="445" y="344" text-anchor="middle" font-size="12" fill="#534AB7">archive row + PDF, live rows gone</text>
+
+<rect x="50" y="220" width="240" height="64" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="170" y="244" text-anchor="middle" font-size="14" font-weight="500" fill="#633806">Reconfirm</text>
+<text x="170" y="264" text-anchor="middle" font-size="12" fill="#854F0B">regenerates PDF, no archive</text>
+<path d="M170 220 L170 160" fill="none" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+</svg>

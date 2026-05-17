@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="500" viewBox="0 0 680 500" role="img" font-family="Arial, Helvetica, sans-serif">
+<title>Bid to schedule sequence</title>
+<desc>Time-ordered lifecycle: PM marks bid won, backend creates project, generates number, fires schedule notification, PM opens the schedule modal from the notification.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<rect x="40" y="30" width="120" height="40" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="100" y="54" text-anchor="middle" font-size="14" font-weight="500" fill="#0C447C">PM (browser)</text>
+<rect x="280" y="30" width="120" height="40" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="340" y="54" text-anchor="middle" font-size="14" font-weight="500" fill="#04342C">bids route</text>
+<rect x="520" y="30" width="120" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="580" y="54" text-anchor="middle" font-size="14" font-weight="500" fill="#26215C">DB + services</text>
+
+<line x1="100" y1="70" x2="100" y2="470" stroke="#999" stroke-width="0.5" stroke-dasharray="3 3"/>
+<line x1="340" y1="70" x2="340" y2="470" stroke="#999" stroke-width="0.5" stroke-dasharray="3 3"/>
+<line x1="580" y1="70" x2="580" y2="470" stroke="#999" stroke-width="0.5" stroke-dasharray="3 3"/>
+
+<text x="220" y="100" text-anchor="middle" font-size="12" fill="#5F5E5A">initiate-won / quick-project</text>
+<line x1="100" y1="110" x2="338" y2="110" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="140" text-anchor="middle" font-size="12" fill="#5F5E5A">load bid + quote totals</text>
+<line x1="340" y1="150" x2="578" y2="150" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="180" text-anchor="middle" font-size="12" fill="#5F5E5A">insert project + manpower</text>
+<line x1="340" y1="190" x2="578" y2="190" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="220" text-anchor="middle" font-size="12" fill="#5F5E5A">generate project number</text>
+<line x1="340" y1="230" x2="578" y2="230" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="260" text-anchor="middle" font-size="12" fill="#5F5E5A">fire schedule notification</text>
+<line x1="340" y1="270" x2="578" y2="270" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="220" y="300" text-anchor="middle" font-size="12" fill="#5F5E5A">project + verify result</text>
+<line x1="338" y1="310" x2="100" y2="310" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="180" y="330" width="320" height="44" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+<text x="340" y="356" text-anchor="middle" font-size="12" fill="#791F1F">Failure point: self-notification on own project</text>
+
+<text x="220" y="404" text-anchor="middle" font-size="12" fill="#5F5E5A">click notification</text>
+<line x1="100" y1="414" x2="338" y2="414" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="140" y="434" width="400" height="40" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="458" text-anchor="middle" font-size="12" fill="#26215C">showScheduleEditPopup opens directly — no tab nav</text>
+</svg>

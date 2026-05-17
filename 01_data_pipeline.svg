@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="540" viewBox="0 0 680 540" role="img" font-family="Arial, Helvetica, sans-serif">
+<title>ConstructPM data pipeline</title>
+<desc>Data flow from bid creation through quoting, won/quick-project, project, scheduler, and equipment tickets to the archive and PDF.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<rect x="240" y="30" width="200" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="340" y="54" text-anchor="middle" font-size="14" font-weight="500" fill="#0C447C">Bid creation</text>
+<text x="340" y="72" text-anchor="middle" font-size="12" fill="#185FA5">customer, location, contacts</text>
+<line x1="340" y1="86" x2="340" y2="116" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="240" y="116" width="200" height="56" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="340" y="140" text-anchor="middle" font-size="14" font-weight="500" fill="#0C447C">Quote table</text>
+<text x="340" y="158" text-anchor="middle" font-size="12" fill="#185FA5">rates locked from sheet</text>
+
+<rect x="478" y="116" width="162" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="559" y="140" text-anchor="middle" font-size="14" font-weight="500" fill="#2C2C2A">Rate sheet</text>
+<text x="559" y="158" text-anchor="middle" font-size="12" fill="#5F5E5A">by local union</text>
+<line x1="478" y1="144" x2="442" y2="144" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="340" y1="172" x2="340" y2="202" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="220" y="202" width="240" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="340" y="226" text-anchor="middle" font-size="14" font-weight="500" fill="#04342C">Won / Quick Project</text>
+<text x="340" y="244" text-anchor="middle" font-size="12" fill="#0F6E56">createProjectFromBid</text>
+<line x1="340" y1="258" x2="340" y2="288" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="240" y="288" width="200" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="340" y="312" text-anchor="middle" font-size="14" font-weight="500" fill="#04342C">Project</text>
+<text x="340" y="330" text-anchor="middle" font-size="12" fill="#0F6E56">manpower, contacts, value</text>
+
+<rect x="478" y="288" width="162" height="56" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="559" y="312" text-anchor="middle" font-size="14" font-weight="500" fill="#633806">Financials</text>
+<text x="559" y="330" text-anchor="middle" font-size="12" fill="#854F0B">invoices, POs roll up</text>
+<line x1="440" y1="316" x2="478" y2="316" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+<line x1="340" y1="344" x2="340" y2="374" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="240" y="374" width="200" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="398" text-anchor="middle" font-size="14" font-weight="500" fill="#26215C">Scheduler</text>
+<text x="340" y="416" text-anchor="middle" font-size="12" fill="#534AB7">start date, day notes</text>
+<line x1="340" y1="430" x2="340" y2="460" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="220" y="460" width="240" height="56" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+<text x="340" y="484" text-anchor="middle" font-size="14" font-weight="500" fill="#4A1B0C">Equipment ticket</text>
+<text x="340" y="502" text-anchor="middle" font-size="12" fill="#993C1D">request to archive + PDF</text>
+</svg>

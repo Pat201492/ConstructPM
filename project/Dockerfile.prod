@@ -1,0 +1,43 @@
+# ══════════════════════════════════════════════════
+# Stage 1: Install dependencies
+# ══════════════════════════════════════════════════
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# ══════════════════════════════════════════════════
+# Stage 2: Production image
+# ══════════════════════════════════════════════════
+FROM node:20-alpine AS production
+
+# Security: run as non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+# Copy only production dependencies
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy application code
+COPY package.json ./
+COPY knexfile.js ./
+COPY migrations/ ./migrations/
+COPY seeds/ ./seeds/
+COPY src/ ./src/
+
+# Create storage directories
+RUN mkdir -p storage/bids storage/projects storage/temp storage/templates/bid \
+    && chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"
+
+EXPOSE 3000
+
+CMD ["node", "src/server.js"]

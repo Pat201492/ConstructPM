@@ -1,0 +1,453 @@
+const db = require('../config/database');
+
+/**
+ * Notification Service
+ * 
+ * Handles creation and delivery of notifications across three channels:
+ * - In-app (stored in DB, delivered via WebSocket)
+ * - Email (via SES or SendGrid)
+ * - Push (via Firebase Cloud Messaging)
+ */
+const NotificationService = {
+  // Reference to Socket.io instance (set during server init)
+  _io: null,
+
+  /**
+   * Initialize with Socket.io instance for real-time in-app delivery
+   */
+  init(io) {
+    this._io = io;
+    console.log('[NotificationService] Initialized with WebSocket support');
+  },
+
+  // ─── REUSABLE LOOKUP HELPERS ──────────────────────────────
+
+  /** Get all active admin user IDs */
+  async getAdminIds() {
+    return db('users').where({ role: 'admin', active: true }).pluck('id');
+  },
+
+  /** Get PM's delegate user ID (or null if no delegate configured) */
+  async getDelegateId(pmUserId) {
+    const row = await db('pm_notification_delegates').where({ pm_user_id: pmUserId }).first();
+    return row ? row.delegate_user_id : null;
+  },
+
+  /** Get deduplicated recipient list: PM + their delegate */
+  async getPmAndDelegate(pmUserId) {
+    const delegate = await this.getDelegateId(pmUserId);
+    return [...new Set([pmUserId, delegate].filter(Boolean))];
+  },
+
+  /**
+   * Send a notification to one or more users.
+   * Respects each user's notification preferences.
+   * 
+   * @param {Object} opts
+   * @param {string[]} opts.userIds - Target user IDs
+   * @param {string} opts.type - Notification type (e.g. 'bid_won', 'extraction_ready')
+   * @param {string} opts.title - Short title
+   * @param {string} opts.body - Notification body text
+   * @param {string} opts.priority - 'low', 'normal', 'high', 'urgent'
+   * @param {string} opts.actionUrl - Deep link URL
+   * @param {string} opts.referenceType - 'bid', 'project', 'invoice', etc.
+   * @param {string} opts.referenceId - ID of related entity
+   * @param {string[]} opts.channels - Override channels ['in_app', 'email', 'push']
+   */
+  async send({
+    userId,      // Single user ID (new, preferred)
+    userIds,     // Array of user IDs (legacy, still supported)
+    type,
+    title,
+    body,
+    category = 'informational', // 'actionable' or 'informational'
+    priority = 'normal',
+    actionUrl = null,
+    actionType = null, // UI hint: 'verify_extraction', 'confirm_payment', 'bid_archive', etc.
+    referenceType = null,
+    referenceId = null,
+    channels = null,
+  }) {
+    // Support both single userId and array userIds
+    const ids = userIds || (userId ? [userId] : []);
+    if (ids.length === 0) return [];
+
+    // Get user preferences
+    const users = await db('users')
+      .whereIn('id', ids)
+      .where('active', true)
+      .select('id', 'email', 'notification_preferences');
+
+    const results = [];
+
+    for (const user of users) {
+      const prefs = typeof user.notification_preferences === 'string'
+        ? JSON.parse(user.notification_preferences)
+        : user.notification_preferences || { in_app: true, email: true, push: true };
+
+      // Determine which channels to use
+      const activeChannels = channels || ['in_app', 'email', 'push'];
+
+      for (const channel of activeChannels) {
+        // Skip if user has disabled this channel
+        if (!prefs[channel]) continue;
+
+        try {
+          // 1. Store in database (all channels get a DB record)
+          const [notification] = await db('notifications').insert({
+            user_id: user.id,
+            type,
+            category,
+            title,
+            body,
+            channel,
+            priority,
+            action_url: actionUrl,
+            action_type: actionType,
+            reference_type: referenceType,
+            reference_id: referenceId,
+          }).returning('*');
+
+          // 2. Deliver via the appropriate channel
+          switch (channel) {
+            case 'in_app':
+              this._deliverInApp(user.id, notification);
+              break;
+            case 'email':
+              this._deliverEmail(user.email, notification).catch(err => {
+                console.error(`[NotificationService] Email failed for ${user.email}:`, err.message);
+              });
+              break;
+            case 'push':
+              this._deliverPush(user.id, notification).catch(err => {
+                console.error(`[NotificationService] Push failed for ${user.id}:`, err.message);
+              });
+              break;
+          }
+
+          results.push(notification);
+        } catch (err) {
+          console.error(`[NotificationService] Failed to send ${channel} to ${user.id}:`, err.message);
+        }
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Deliver in-app notification via WebSocket
+   */
+  _deliverInApp(userId, notification) {
+    if (this._io) {
+      this._io.to(`user:${userId}`).emit('notification', {
+        id: notification.id,
+        type: notification.type,
+        title: notification.title,
+        body: notification.body,
+        priority: notification.priority,
+        action_url: notification.action_url,
+        reference_type: notification.reference_type,
+        reference_id: notification.reference_id,
+        created_at: notification.created_at,
+      });
+    }
+  },
+
+  /**
+   * Deliver email notification via SES or SendGrid
+   */
+  async _deliverEmail(email, notification) {
+    if (!email) return;
+
+    const provider = process.env.EMAIL_PROVIDER;
+
+    if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
+      await this._sendViaSendGrid(email, notification);
+    } else if (provider === 'ses' && process.env.SES_REGION) {
+      await this._sendViaSES(email, notification);
+    } else {
+      // Log email that would be sent (dev mode)
+      console.log(`[NotificationService] EMAIL (dev): To: ${email} | Subject: ${notification.title} | Body: ${notification.body}`);
+    }
+  },
+
+  /**
+   * Send email via SendGrid
+   */
+  async _sendViaSendGrid(to, notification) {
+    const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: process.env.EMAIL_FROM || 'noreply@constructpm.com' },
+        subject: notification.title,
+        content: [
+          {
+            type: 'text/html',
+            value: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px;">
+                <h2 style="color: #1F4E79;">${notification.title}</h2>
+                <p>${notification.body}</p>
+                ${notification.action_url ? `<p><a href="${notification.action_url}" style="color: #2E75B6;">View Details →</a></p>` : ''}
+                <hr style="border: 1px solid #eee;">
+                <p style="color: #999; font-size: 12px;">Construction PM Platform</p>
+              </div>
+            `,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`SendGrid error: ${response.status}`);
+    }
+  },
+
+  /**
+   * Send email via AWS SES
+   */
+  async _sendViaSES(to, notification) {
+    const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+
+    const client = new SESClient({ region: process.env.SES_REGION });
+    const command = new SendEmailCommand({
+      Source: process.env.EMAIL_FROM || 'noreply@constructpm.com',
+      Destination: { ToAddresses: [to] },
+      Message: {
+        Subject: { Data: notification.title },
+        Body: {
+          Html: {
+            Data: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px;">
+                <h2 style="color: #1F4E79;">${notification.title}</h2>
+                <p>${notification.body}</p>
+                ${notification.action_url ? `<p><a href="${notification.action_url}">View Details →</a></p>` : ''}
+              </div>
+            `,
+          },
+        },
+      },
+    });
+
+    await client.send(command);
+  },
+
+  /**
+   * Deliver push notification via Firebase Cloud Messaging
+   */
+  async _deliverPush(userId, notification) {
+    if (!process.env.FIREBASE_PROJECT_ID) {
+      console.log(`[NotificationService] PUSH (dev): User: ${userId} | ${notification.title}`);
+      return;
+    }
+
+    // In production, you'd use firebase-admin SDK here
+    // This requires storing FCM device tokens per user (a separate table)
+    const tokens = await db('user_devices')
+      .where({ user_id: userId })
+      .pluck('fcm_token')
+      .catch(() => []);
+
+    if (tokens.length === 0) return;
+
+    // Firebase Admin SDK call would go here
+    console.log(`[NotificationService] Would send push to ${tokens.length} device(s) for user ${userId}`);
+  },
+
+  // ─── QUERY METHODS ────────────────────────────────────────
+
+  /**
+   * Get notifications for a user
+   */
+  async getForUser(userId, { read, limit = 50, offset = 0 } = {}) {
+    const query = db('notifications')
+      .where({ user_id: userId, channel: 'in_app' })
+      .orderBy('created_at', 'desc');
+
+    if (typeof read === 'boolean') query.where('read', read);
+
+    const countQuery = query.clone().clearSelect().clearOrder().count('* as total').first();
+    const [notifications, countResult] = await Promise.all([
+      query.limit(limit).offset(offset),
+      countQuery,
+    ]);
+
+    return {
+      notifications,
+      total: parseInt(countResult.total, 10),
+      unread: await this.getUnreadCount(userId),
+    };
+  },
+
+  /**
+   * Get unread count for a user
+   */
+  async getUnreadCount(userId) {
+    const result = await db('notifications')
+      .where({ user_id: userId, channel: 'in_app', read: false })
+      .count('* as count')
+      .first();
+    return parseInt(result.count, 10);
+  },
+
+  /**
+   * Mark a notification as read
+   */
+  async markRead(notificationId, userId) {
+    const [notification] = await db('notifications')
+      .where({ id: notificationId, user_id: userId })
+      .update({ read: true, read_at: db.fn.now() })
+      .returning('*');
+    return notification;
+  },
+
+  /**
+   * Mark all notifications as read for a user
+   */
+  async markAllRead(userId) {
+    return db('notifications')
+      .where({ user_id: userId, channel: 'in_app', read: false })
+      .update({ read: true, read_at: db.fn.now() });
+  },
+
+  /**
+   * Dismiss all informational notifications for a user.
+   * Actionable notifications cannot be dismissed — only resolved.
+   */
+  async dismissAllInformational(userId) {
+    return db('notifications')
+      .where({ user_id: userId, category: 'informational', dismissed: false })
+      .update({ dismissed: true, read: true, read_at: db.fn.now() });
+  },
+
+  // ─── CONVENIENCE SENDERS ──────────────────────────────────
+
+  /**
+   * Notify relevant users when a bid is won
+   */
+  async notifyBidWon(bid, project) {
+    // #7: Admin + PM + PM admin (delegate)
+    const recipients = [];
+
+    // All admins
+    const admins = await db('users')
+      .where('active', true)
+      .where('role', 'admin')
+      .pluck('id');
+    recipients.push(...admins);
+
+    // PM (estimator)
+    if (bid.estimator_id && !recipients.includes(bid.estimator_id)) {
+      recipients.push(bid.estimator_id);
+    }
+
+    // PM's delegate (PM admin)
+    const delegate = await db('pm_notification_delegates')
+      .where({ pm_user_id: bid.estimator_id })
+      .first();
+    if (delegate && !recipients.includes(delegate.delegate_user_id)) {
+      recipients.push(delegate.delegate_user_id);
+    }
+
+    return this.send({
+      userIds: recipients,
+      type: 'bid_won',
+      category: 'informational',
+      title: `Bid Won: ${bid.bid_number}`,
+      body: `Bid ${bid.bid_number} — ${bid.project_scope} has been marked as won. Project "${project.name}" has been created.`,
+      priority: 'high',
+      actionUrl: `/projects/${project.id}`,
+      referenceType: 'project',
+      referenceId: project.id,
+    });
+  },
+
+  /**
+   * Notify when a document extraction is ready for review
+   */
+  async notifyExtractionReady(extraction) {
+    const docTypeLabels = {
+      invoice: 'Invoice',
+      timesheet: 'Timesheet',
+      purchase_order: 'Purchase Order',
+      contract: 'Contract',
+    };
+
+    // Determine recipients based on doc type
+    const roleMap = {
+      invoice: ['admin', 'accounting', 'project_manager'],
+      purchase_order: ['admin', 'shop_staff', 'accounting'],
+      contract: ['admin', 'project_manager'],
+      timesheet: ['admin', 'accounting', 'project_manager'],
+    };
+
+    const targetRoles = roleMap[extraction.doc_type] || ['admin'];
+    const recipients = await db('users')
+      .where('active', true)
+      .whereIn('role', targetRoles)
+      .pluck('id');
+
+    return this.send({
+      userIds: recipients,
+      type: 'extraction_ready',
+      title: `${docTypeLabels[extraction.doc_type] || 'Document'} Ready for Review`,
+      body: `A new ${extraction.doc_type} file "${extraction.file_name}" has been processed and needs your review.`,
+      priority: 'high',
+      actionUrl: `/extractions/${extraction.id}`,
+      referenceType: 'extraction',
+      referenceId: extraction.id,
+      channels: ['in_app', 'push'],
+    });
+  },
+
+  /**
+   * Notify when a timesheet is submitted from mobile
+   */
+  async notifyTimesheetSubmitted(timesheet, submitter) {
+    const recipients = await db('users')
+      .where('active', true)
+      .whereIn('role', ['accounting', 'project_manager'])
+      .pluck('id');
+
+    return this.send({
+      userIds: recipients,
+      type: 'timesheet_submitted',
+      title: 'Timesheet Submitted',
+      body: `${submitter.first_name} ${submitter.last_name} submitted a timesheet for ${timesheet.hours} hours on ${timesheet.work_date}.`,
+      priority: 'normal',
+      actionUrl: `/projects/${timesheet.project_id}/timesheets`,
+      referenceType: 'project',
+      referenceId: timesheet.project_id,
+      channels: ['in_app', 'email'],
+    });
+  },
+
+  /**
+   * Notify on low inventory stock
+   */
+  async notifyLowStock(item) {
+    const recipients = await db('users')
+      .where('active', true)
+      .whereIn('role', ['admin', 'shop_staff'])
+      .pluck('id');
+
+    return this.send({
+      userIds: recipients,
+      type: 'low_stock',
+      title: `Low Stock Alert: ${item.item_name}`,
+      body: `${item.item_name} is at ${item.quantity} ${item.unit} (minimum: ${item.min_stock} ${item.unit}).`,
+      priority: 'normal',
+      actionUrl: `/inventory/${item.id}`,
+      referenceType: 'inventory',
+      referenceId: item.id,
+      channels: ['in_app', 'email'],
+    });
+  },
+};
+
+module.exports = NotificationService;

@@ -1,0 +1,120 @@
+name: CI — Test & Lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_ENV: test
+  DB_HOST: localhost
+  DB_PORT: 5432
+  DB_USER: postgres
+  DB_PASSWORD: postgres
+  DB_NAME: construct_mgr
+  TEST_DB_NAME: construct_mgr_test
+  JWT_SECRET: ci-test-secret
+  JWT_REFRESH_SECRET: ci-test-refresh-secret
+  JWT_EXPIRES_IN: 1h
+  JWT_REFRESH_EXPIRES_IN: 7d
+  STORAGE_BASE_PATH: /tmp/test-storage
+  ENABLE_FILE_WATCHER: 'false'
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: construct_mgr_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create storage directories
+        run: mkdir -p /tmp/test-storage/{bids,projects,temp,templates/bid}
+
+      - name: Run database migrations
+        run: npx knex migrate:latest
+        env:
+          DB_NAME: construct_mgr_test
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          REDIS_URL: redis://localhost:6379
+
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t construct-pm:ci .
+
+      - name: Verify image runs
+        run: |
+          docker run --rm -d --name ci-check \
+            -e NODE_ENV=production \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_NAME=test \
+            -e DB_USER=test \
+            -e DB_PASSWORD=test \
+            -e JWT_SECRET=ci-secret \
+            -e JWT_REFRESH_SECRET=ci-refresh \
+            construct-pm:ci node -e "require('./src/app'); console.log('Build OK')"
+          docker stop ci-check || true

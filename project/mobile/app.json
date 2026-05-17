@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "ConstructPM",
+    "slug": "constructpm",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F1923"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.constructpm.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "ConstructPM needs camera access for barcode scanning and form photos.",
+        "NSPhotoLibraryUsageDescription": "ConstructPM needs photo library access for uploading form photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F1923"
+      },
+      "package": "com.constructpm.mobile",
+      "permissions": ["CAMERA"]
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-image-picker",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#3B82F6"
+        }
+      ]
+    ]
+  }
+}

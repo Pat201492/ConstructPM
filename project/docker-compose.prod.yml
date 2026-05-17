@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: constructpm_api
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-construct_mgr}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.production}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env.production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env.production}
+      REDIS_URL: redis://redis:6379
+      STORAGE_TYPE: local
+      STORAGE_BASE_PATH: /app/storage
+      DISPLAY_TOKEN: ${DISPLAY_TOKEN:-shopfloor}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
+      AI_BACKEND: ${AI_BACKEND:-auto}
+      OCR_BACKEND: ${OCR_BACKEND:-tesseract}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+    volumes:
+      - app_storage:/app/storage
+      - ./templates:/app/templates:ro
+    networks:
+      - internal
+
+  db:
+    image: postgres:16-alpine
+    container_name: constructpm_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-construct_mgr}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: constructpm_redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+
+  nginx:
+    image: nginx:alpine
+    container_name: constructpm_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
+    depends_on:
+      - api
+    networks:
+      - internal
+
+  certbot:
+    image: certbot/certbot
+    container_name: constructpm_certbot
+    volumes:
+      - ./nginx/certs:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew; done'"
+
+volumes:
+  db_data:
+  redis_data:
+  app_storage:
+  certbot_webroot:
+
+networks:
+  internal:
+    driver: bridge

@@ -1,0 +1,118 @@
+# ══════════════════════════════════════════════════════════════
+# LOCAL TESTING — Docker Compose
+#
+# Runs: PostgreSQL + Redis + API Server
+# Usage: docker compose up
+# API at: http://localhost:3000
+#
+# STORAGE OPTIONS:
+#   Default:       Files stored in ./storage/ next to this file
+#   Network drive: Mount your NAS/server first, then set the path:
+#     Linux:   sudo mount -t nfs server:/share /mnt/nas
+#     Windows: net use Z: \\server\share
+#     Then change the volume below to: /mnt/nas:/app/storage
+#     Or set storage_base_path in Admin → Global Variables
+# ══════════════════════════════════════════════════════════════
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: constructpm_db
+    environment:
+      POSTGRES_DB: construct_mgr
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: constructpm_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: constructpm_api
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      ENABLE_DEV_LOGIN: 'true'
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: construct_mgr
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      JWT_SECRET: testing-secret-change-for-production
+      JWT_EXPIRES_IN: 24h
+      JWT_REFRESH_SECRET: testing-refresh-secret-change-for-production
+      JWT_REFRESH_EXPIRES_IN: 30d
+      REDIS_URL: redis://redis:6379
+      STORAGE_TYPE: local
+      STORAGE_BASE_PATH: /app/storage
+      OLLAMA_HOST: http://host.docker.internal:11434
+      OLLAMA_MODEL: llama3:8b
+      # Vision model used when a vendor-quote / cart screenshot is
+      # uploaded as an image. Pull whichever vision model you prefer
+      # locally (`ollama pull qwen3-vl:30b` or `ollama pull llava:13b`)
+      # and set the matching name here.
+      OLLAMA_VISION_MODEL: qwen3-vl:30b
+      AI_BACKEND: ollama
+      # Local Ollama on CPU/iGPU can be slow on first call (model load
+      # into RAM). 60s default isn't enough. Bumped so cold extractions
+      # don't time out — warm calls finish well under this.
+      AI_TIMEOUT_MS: "180000"
+      OCR_BACKEND: tesseract
+      ENABLE_FILE_WATCHER: "false"
+      AI_AUTO_CONFIRM: "false"
+      DISPLAY_TOKEN: shopfloor
+      # GOOGLE_MAPS_API_KEY: your-key-here
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./storage:/app/storage
+      # ── To use a network drive, replace the line above with: ──
+      # - /mnt/nas/constructpm:/app/storage     # Linux NFS mount
+      # - //server/share/constructpm:/app/storage # Docker Desktop SMB
+      #
+      # ── Or mount BOTH local + remote for split storage: ──
+      # - ./storage:/app/storage                  # default local
+      # - /mnt/nas/projects:/app/remote-projects  # remote projects
+      # Then set storage_projects_path=/app/remote-projects in Admin → Global Variables
+    command: >
+      sh -c "
+        echo 'Running database migrations...' &&
+        npx knex migrate:latest &&
+        echo 'Seeding admin user...' &&
+        npx knex seed:run &&
+        echo '' &&
+        echo '========================================' &&
+        echo '  Server: http://localhost:3000' &&
+        echo '  Health: http://localhost:3000/api/health' &&
+        echo '  Login:  admin@company.com / ChangeMe123!' &&
+        echo '========================================' &&
+        echo '' &&
+        node src/server.js
+      "
+
+volumes:
+  pgdata:

@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Environment files (contain secrets)
+.env
+.env.production
+.env.local
+
+# Storage (user data + auto-generated runtime files)
+storage/bids/
+storage/projects/
+storage/temp/
+storage/templates/
+storage/inbox/
+storage/equipment/
+storage/invoices/
+storage/purchase_orders/
+storage/vendor_quotes/
+storage/timesheets/
+storage/oil_samples/
+storage/field_notes/
+
+# Backups
+backups/*.sql.gz
+
+# Local Docker volume dirs
+postgres-data/
+redis-data/
+
+# Test artifacts
+*.test.log
+test-results/
+
+# SSL certs
+nginx/certs/*.pem
+nginx/certs/*.key
+
+# Coverage reports
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
