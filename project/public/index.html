@@ -1549,7 +1549,15 @@ async function renderBidCreate(main) {
   // stop auto-mirroring so we don't clobber their choice.
   const siteDrop=searchDrop('bc-sitecontact','Site Contact',contacts.contacts,c=>`${c.name}${c.company?' ('+c.company+')':''}`);
   const siteGroup=siteDrop.group;
+  siteDrop.row.append(h('button',{className:'btn btn-sm',type:'button',onclick:()=>toggleInline('site')},'+'));
   siteGroup.append(siteDrop.row);
+  const siteInline=h('div',{id:'inline-site',style:'display:none;margin-top:8px;padding:10px;background:var(--bg3);border-radius:6px'});
+  siteInline.innerHTML=`<input id="nsi-name" placeholder="Contact name" style="margin-bottom:6px">
+    <div style="display:flex;gap:6px"><input id="nsi-email" placeholder="Email"><input id="nsi-phone" placeholder="Phone"></div>
+    <input id="nsi-company" placeholder="Company" style="margin-top:6px">`;
+  const siteSaveBtn=h('button',{className:'btn btn-sm',style:'margin-top:6px'},'Save Contact');
+  siteInline.append(siteSaveBtn);
+  siteGroup.append(siteInline);
   form.append(siteGroup);
 
   let siteContactTouched=false;
@@ -1560,6 +1568,19 @@ async function renderBidCreate(main) {
       siteDrop.input.value=`${c.name}${c.company?' ('+c.company+')':''}`;
       siteDrop.hidden.value=c.id;
     }
+  };
+
+  siteSaveBtn.onclick=async function(){
+    try{
+      const c=await api('/contacts',{method:'POST',body:JSON.stringify({name:$('#nsi-name').value,email:$('#nsi-email').value,phone:$('#nsi-phone').value,company:$('#nsi-company').value})});
+      contacts.contacts.push(c);
+      // Selecting via "+" is an explicit choice — lock in site contact
+      // and stop the customer-contact mirror from overwriting it.
+      siteContactTouched=true;
+      $('#bc-sitecontact').value=c.id;
+      $('#bc-sitecontact-search').value=c.name;
+      $('#inline-site').style.display='none';
+    }catch(e){alert(e.message)}
   };
 
   // Union auto-fill + Miles + Scope
@@ -1726,6 +1747,11 @@ async function renderBidQuote(main) {
   const info=h('div',{className:'cards'});
   info.append(makeCard('Customer',bid.customer_name||'—',''));
   info.append(makeCard('Location',bid.location_name||'—',bid.location_address||''));
+  // Customer Contact + Site Contact — surfaced here so the PM doesn't
+  // have to dig through the Edit modal to confirm who to call about
+  // billing vs. who's on site. Phone shown as the subtitle when present.
+  info.append(makeCard('Customer Contact',bid.contact_name||'—',bid.contact_phone||''));
+  info.append(makeCard('Site Contact',bid.site_contact_name||bid.contact_name||'—',bid.site_contact_phone||bid.contact_phone||''));
   info.append(makeCard('Local Union',fmtUnion(bid.local_union),''));
   info.append(makeCard('Scope',bid.project_scope||'—',''));
   // Show Estimator + Assigned PM if they're different (estimator hand-off pattern)
@@ -2126,8 +2152,32 @@ async function renderBidQuote(main) {
       }
       if (!confirm('Create a project directly from this bid\u2019s data?\n\nThis skips document scanning and the verify screen. The project number will be auto-generated (you can rename it later on the project).')) return;
       try {
+        // Save quote + generate Excel/Word docs first so the bid has a
+        // finalized matrix and Word quote on disk before the project is
+        // created. Matches the "Save & Generate Docs" path so a one-click
+        // Quick Project leaves the same trail of artifacts as the Mark
+        // Won flow.
+        const lineData=lines.map(l=>({
+          classification:l.classification,
+          personnel:parseInt(l.personnel)||0,
+          st_hours:parseFloat(l.st_hours)||0,
+          ot_hours:parseFloat(l.ot_hours)||0,
+          dt_hours:parseFloat(l.dt_hours)||0,
+          st_rate:parseFloat(l.st_rate)||0,
+          ot_rate:parseFloat(l.ot_rate)||0,
+          dt_rate:parseFloat(l.dt_rate)||0,
+        }));
+        const markupPct=parseFloat($('#bq-markup').value)||0;
+        const days=parseInt($('#bq-days').value)||0;
+        const perDiem=parseFloat($('#bq-perdiem').value)||0;
+        await api('/bids/'+bid.id+'/quote',{method:'POST',body:JSON.stringify({
+          markup_pct:markupPct, project_length_days:days, per_diem_rate:perDiem, lines:lineData,
+        })});
+        await api('/bids/'+bid.id+'/generate',{method:'POST',body:JSON.stringify({
+          markup_pct:markupPct, per_diem_rate:perDiem, lines:lineData,
+        })});
         const r = await api('/bids/'+bid.id+'/quick-project',{method:'POST'});
-        alert('Project created.');
+        alert('Project created. Quote docs generated.');
         navigate('project-detail',{id:r.project.id});
       } catch(e) { alert(e.message); }
     }},'Quick Project'));

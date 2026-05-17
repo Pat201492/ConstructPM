@@ -638,7 +638,11 @@ async function createProjectFromBid(bid, confirmedFields) {
     const ProjectNumber = require('../models/ProjectNumber');
     let primaryNumber = (confirmedFields.project_number || '').trim();
     if (!primaryNumber) {
-      primaryNumber = await ProjectNumber.generateStructured(project, trx);
+      const generated = await ProjectNumber.generateStructured(project, trx);
+      if (generated?.error) {
+        throw Object.assign(new Error(generated.error), { status: 400 });
+      }
+      primaryNumber = generated?.number || '';
     }
     if (primaryNumber) {
       const collision = await trx('project_numbers').where('number', primaryNumber).first();
