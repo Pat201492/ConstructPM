@@ -4819,33 +4819,70 @@ async function showScheduleEditPopup(projectId, onSaved) {
 // toggle and drag-reorder) is phase 2A.2 — placeholder still routes to
 // a "coming soon" message.
 
-const schedulerState = { monthAnchor: null, view: 'by-project', byWorkerMode: 'simplified' };
+const schedulerState = {
+  monthAnchor: null,
+  weekAnchor: null, // Sunday of the visible week — used by the By-Worker view
+  view: 'by-project',
+  byWorkerMode: 'extended',
+  sortByDateKey: null, // when set, By-Worker rows sort by assignment on this date
+  sortDir: 'asc',      // 'asc' = blanks first, 'desc' = blanks last
+};
 
 async function renderScheduler(main) {
   if (!schedulerState.monthAnchor) {
     const t = new Date();
     schedulerState.monthAnchor = new Date(t.getFullYear(), t.getMonth(), 1);
   }
-  const anchor = schedulerState.monthAnchor;
+  if (!schedulerState.weekAnchor) {
+    // Sunday of the current week — the By-Worker view is weekly, so the
+    // anchor is a single Sunday rather than the first of a month.
+    const t = new Date();
+    const sunday = new Date(t.getFullYear(), t.getMonth(), t.getDate() - t.getDay());
+    schedulerState.weekAnchor = sunday;
+  }
+  const isByWorker = schedulerState.view === 'by-worker';
 
   const hdr = h('div',{className:'page-header'});
   hdr.append(h('h1',{},'Scheduler'));
-  hdr.append(h('div',{style:'margin-left:auto;display:flex;gap:8px;align-items:center'}, [
-    h('button',{className:'btn-outline btn-sm',onclick:()=>{
+  const navWrap = h('div',{style:'margin-left:auto;display:flex;gap:8px;align-items:center'});
+
+  if (isByWorker) {
+    // By-Worker: week nav. Anchor = Sunday; label = "Mar 15 – Mar 21".
+    const wk = schedulerState.weekAnchor;
+    const wkEnd = new Date(wk.getFullYear(), wk.getMonth(), wk.getDate() + 6);
+    const lbl = `${wk.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${wkEnd.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+    navWrap.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
+      schedulerState.weekAnchor = new Date(wk.getFullYear(), wk.getMonth(), wk.getDate() - 7);
+      main.innerHTML=''; renderScheduler(main);
+    }},'◀ Prev'));
+    navWrap.append(h('strong',{style:'min-width:180px;text-align:center'}, lbl));
+    navWrap.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
+      schedulerState.weekAnchor = new Date(wk.getFullYear(), wk.getMonth(), wk.getDate() + 7);
+      main.innerHTML=''; renderScheduler(main);
+    }},'Next ▶'));
+    navWrap.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
+      const t = new Date();
+      schedulerState.weekAnchor = new Date(t.getFullYear(), t.getMonth(), t.getDate() - t.getDay());
+      main.innerHTML=''; renderScheduler(main);
+    }},'Today'));
+  } else {
+    const anchor = schedulerState.monthAnchor;
+    navWrap.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
       schedulerState.monthAnchor = new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1);
       main.innerHTML=''; renderScheduler(main);
-    }},'◀ Prev'),
-    h('strong',{style:'min-width:140px;text-align:center'}, anchor.toLocaleDateString(undefined,{month:'long',year:'numeric'})),
-    h('button',{className:'btn-outline btn-sm',onclick:()=>{
+    }},'◀ Prev'));
+    navWrap.append(h('strong',{style:'min-width:140px;text-align:center'}, anchor.toLocaleDateString(undefined,{month:'long',year:'numeric'})));
+    navWrap.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
       schedulerState.monthAnchor = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
       main.innerHTML=''; renderScheduler(main);
-    }},'Next ▶'),
-    h('button',{className:'btn-outline btn-sm',onclick:()=>{
+    }},'Next ▶'));
+    navWrap.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
       const t = new Date();
       schedulerState.monthAnchor = new Date(t.getFullYear(), t.getMonth(), 1);
       main.innerHTML=''; renderScheduler(main);
-    }},'Today'),
-  ]));
+    }},'Today'));
+  }
+  hdr.append(navWrap);
   main.append(hdr);
 
   // View toggle — By Project (calendar of project cards w/ crew counts)
@@ -4876,7 +4913,7 @@ async function renderScheduler(main) {
   main.append(cal);
 
   // Compute window: pad to full weeks
-  const firstOfMonth = anchor;
+  const firstOfMonth = schedulerState.monthAnchor;
   const gridStart = new Date(firstOfMonth);
   gridStart.setDate(gridStart.getDate() - gridStart.getDay());
   const gridEnd = new Date(gridStart);
@@ -4975,7 +5012,12 @@ async function renderScheduler(main) {
       if (!set || !set.has(dKey)) return;
       const assigned = assignmentCounts[`${p.id}|${dKey}`] || 0;
       const target = parseInt(p.manpower, 10) || 0;
-      const stamp = p.fully_staffed ? '✅ ' : '';
+      // Per-day fully_staffed: pulled from /scheduled-list's
+      // fully_staffed_dates array. The legacy project-wide field is
+      // ignored in the UI — Pat's rule, only Copy-Day propagates.
+      const fsDays = new Set(p.fully_staffed_dates || []);
+      const isFullyStaffedDay = fsDays.has(dKey);
+      const stamp = isFullyStaffedDay ? '✅ ' : '';
       const countLabel = target > 0 ? ` (${assigned}/${target})` : ` (${assigned})`;
       const card = h('div',{
         title: `${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}\nClick to manage crew for ${dKey}`,
@@ -5003,7 +5045,7 @@ async function renderScheduler(main) {
   cal.append(grid);
 
   main.append(h('p',{style:'color:var(--text2);font-size:12px;margin-top:12px'},
-    'Click any project card to manage that day\u2019s crew. Counts show "assigned / target manpower". Green ✓ = project is marked Fully Staffed.'));
+    'Click any project card to manage that day\u2019s crew. Counts show "assigned / target manpower". Green ✓ = that day is marked Fully Staffed (per-day; Copy-Day propagates across all working days).'));
 }
 
 // Per-day scheduler pop-up — opens when a calendar card is clicked.
@@ -5017,11 +5059,12 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
   modal.append(loading);
   overlay.append(modal); document.body.append(overlay);
 
-  let allAssignments = [], schedule = {};
+  let allAssignments = [], schedule = {}, dayState = { fully_staffed: false, notes: '' };
   try {
-    [allAssignments, schedule] = await Promise.all([
+    [allAssignments, schedule, dayState] = await Promise.all([
       api('/projects/' + project.id + '/assignments').then(r => r.assignments || []),
       api('/projects/' + project.id + '/schedule'),
+      api(`/projects/${project.id}/day-notes/${dateKey}`).catch(() => ({ fully_staffed: false, notes: '' })),
     ]);
   } catch (err) {
     loading.textContent = 'Could not load: ' + err.message;
@@ -5031,29 +5074,34 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
   const dayAssignments = allAssignments.filter(a => String(a.work_date).slice(0, 10) === dateKey);
 
   modal.innerHTML = '';
-  modal.append(h('h2',{},(project.fully_staffed ? '✅ ' : '') + (project.primary_number ? project.primary_number + ' — ' : '') + (project.name || 'Project')));
+  modal.append(h('h2',{},(dayState.fully_staffed ? '✅ ' : '') + (project.primary_number ? project.primary_number + ' — ' : '') + (project.name || 'Project')));
   modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:6px'},
     `Customer: ${project.customer_name || '—'} • PM: ${project.pm_name || '—'} • Length: ${project.project_length_days || '?'} working days • Manpower target: ${project.manpower || '?'}`));
   modal.append(h('p',{style:'color:var(--text);font-size:13px;font-weight:600;margin-bottom:12px'},
     `Crew for ${dateKey}: ${dayAssignments.length} worker${dayAssignments.length === 1 ? '' : 's'} assigned`));
 
-  // Fully Staffed toggle — project-level state, not per-day
+  // Fully Staffed toggle — per-day state. Only marks THIS date as fully
+  // staffed; the project-wide green ✓ stamp only appears across all
+  // working days when the scheduler hits "Copy this day's crew to all
+  // working days" (which also propagates fully_staffed). Per Pat's rule.
   const fsRow = h('div',{style:'background:var(--bg3);padding:10px;border-radius:6px;margin-bottom:12px;display:flex;align-items:center;gap:10px'});
   const fsCb = h('input',{type:'checkbox',style:'width:auto'});
-  fsCb.checked = !!project.fully_staffed;
+  fsCb.checked = !!dayState.fully_staffed;
   fsCb.onchange = async () => {
     try {
-      await api('/projects/' + project.id, {method:'PATCH', body: JSON.stringify({fully_staffed: fsCb.checked})});
-      project.fully_staffed = fsCb.checked;
-      // Reflect in modal title without closing
+      await api(`/projects/${project.id}/day-notes/${dateKey}`, {
+        method: 'PUT',
+        body: JSON.stringify({ fully_staffed: fsCb.checked }),
+      });
+      dayState.fully_staffed = fsCb.checked;
       const h2 = modal.querySelector('h2');
       if (h2) h2.textContent = (fsCb.checked ? '✅ ' : '') + (project.primary_number ? project.primary_number + ' — ' : '') + (project.name || 'Project');
     } catch (err) { alert(err.message); fsCb.checked = !fsCb.checked; }
   };
   const fsLbl = h('label',{style:'display:flex;align-items:center;gap:8px;cursor:pointer'});
   fsLbl.append(fsCb);
-  fsLbl.append(h('span',{style:'font-weight:600'},'Fully Staffed'));
-  fsLbl.append(h('span',{style:'font-size:12px;color:var(--text2)'},'(green ✓ on the calendar card)'));
+  fsLbl.append(h('span',{style:'font-weight:600'},'Fully Staffed for ' + dateKey));
+  fsLbl.append(h('span',{style:'font-size:12px;color:var(--text2)'},'(per-day; use Copy-Day to broadcast)'));
   fsRow.append(fsLbl);
   modal.append(fsRow);
 
@@ -5134,7 +5182,7 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
     style: 'width:100%;min-height:60px;padding:6px;font-family:inherit;font-size:12px;resize:vertical',
     placeholder: 'Optional — special instructions, gate code, pre-shift meeting time, etc.',
   });
-  dayNoteTA.value = ''; // populated below after fetch
+  dayNoteTA.value = dayState?.notes || '';
   dayNotesSection.append(dayNoteTA);
   const dayNoteSaveBtn = h('button',{className:'btn-outline btn-sm',style:'margin-top:6px',onclick:async()=>{
     try {
@@ -5148,13 +5196,6 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
   }},'Save Note');
   dayNotesSection.append(dayNoteSaveBtn);
   modal.append(dayNotesSection);
-
-  // Fetch the current day note and pre-populate the textarea. Done
-  // after appending so the textarea exists in DOM; non-blocking — if
-  // it fails we leave the placeholder visible.
-  api(`/projects/${project.id}/day-notes/${dateKey}`)
-    .then(r => { dayNoteTA.value = r?.notes || ''; })
-    .catch(() => {});
 
   // ─── Email Day to Staff ─────────────────────────────────────
   const emailRow = h('div',{style:'display:flex;justify-content:flex-end;margin-bottom:10px'});
@@ -5183,9 +5224,15 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
   }, '✉ Email Day to Staff'));
   modal.append(emailRow);
 
-  // Close button
+  // Close button — re-renders the calendar so any assignment/fully-staffed
+  // changes made inside the modal show up on the cards without a manual
+  // refresh. Was the bug Pat hit where the title-card crew count stayed
+  // at 0/x after the first assignment until the page was reloaded.
   const closeRow = h('div',{style:'display:flex;justify-content:flex-end;border-top:1px solid var(--border);padding-top:10px'});
-  closeRow.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Close'));
+  closeRow.append(h('button',{className:'btn-outline',onclick:()=>{
+    overlay.remove();
+    if (onSaved) onSaved();
+  }},'Close'));
   modal.append(closeRow);
 }
 
@@ -5208,12 +5255,12 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
 // sync visually when the user toggles.
 
 async function renderSchedulerByWorker(main) {
-  const anchor = schedulerState.monthAnchor;
-  const firstOfMonth = anchor;
-  const gridStart = new Date(firstOfMonth);
-  gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+  // Weekly window — 7 days starting from weekAnchor (Sunday). Switched
+  // from the previous 6-week pad so the grid fits one screen and the
+  // navigation buttons step by week instead of by month.
+  const gridStart = new Date(schedulerState.weekAnchor);
   const gridEnd = new Date(gridStart);
-  gridEnd.setDate(gridEnd.getDate() + 41);
+  gridEnd.setDate(gridEnd.getDate() + 6);
   const fmt = (d) => d.toISOString().split('T')[0];
 
   // Mode toggle (extended / simplified)
@@ -5229,7 +5276,7 @@ async function renderSchedulerByWorker(main) {
   });
   if (schedulerState.byWorkerMode === 'extended') {
     modeRow.append(h('span',{style:'color:var(--text3);font-size:11px;margin-left:8px'},
-      'Drag project numbers within a cell to reorder.'));
+      'Drag to Reorder'));
   }
   main.append(modeRow);
 
@@ -5272,9 +5319,9 @@ async function renderSchedulerByWorker(main) {
   // Sort each cell by order_index then id (stable)
   byWorkerByDate.forEach(dateMap => dateMap.forEach(arr => arr.sort((x,y) => (x.order_index - y.order_index) || x.id.localeCompare(y.id))));
 
-  // Build grid: Worker col + 42 day cols. Header row: blank + day labels.
+  // Build grid: Worker col + 7 day cols.
   const dayCols = [];
-  for (let i = 0; i < 42; i++) {
+  for (let i = 0; i < 7; i++) {
     const d = new Date(gridStart);
     d.setDate(d.getDate() + i);
     dayCols.push(d);
@@ -5290,39 +5337,52 @@ async function renderSchedulerByWorker(main) {
     return `hsl(${hh % 360}, 60%, 30%)`;
   }
 
-  const tbl = h('table',{style:'border-collapse:collapse;font-size:11px;width:100%;table-layout:fixed'});
-  // Header: month spans + day numbers
+  const tbl = h('table',{style:'border-collapse:collapse;font-size:12px;width:100%'});
+  // Header: weekday + date (clickable to sort)
   const thead = h('thead');
-  const trMonths = h('tr');
-  trMonths.append(h('th',{style:'position:sticky;left:0;background:var(--bg3);min-width:120px;padding:4px 8px;text-align:left;z-index:2'},'Worker'));
-  // Group consecutive days by month for the top header
-  let mIdx = 0;
-  while (mIdx < 42) {
-    const monthLabel = dayCols[mIdx].toLocaleDateString(undefined,{month:'short'});
-    let span = 1;
-    while (mIdx + span < 42 && dayCols[mIdx+span].getMonth() === dayCols[mIdx].getMonth()) span++;
-    trMonths.append(h('th',{
-      colSpan: span,
-      style:'background:var(--bg3);padding:4px;font-size:10px;color:var(--text2);font-weight:600;border-left:1px solid var(--border)',
-    }, monthLabel));
-    mIdx += span;
-  }
-  thead.append(trMonths);
+  const trDows = h('tr');
+  trDows.append(h('th',{style:'position:sticky;left:0;background:var(--bg3);min-width:160px;padding:4px 8px;text-align:left;z-index:2'},'Worker'));
+  dayCols.forEach(d => {
+    trDows.append(h('th',{style:`
+      background:var(--bg3);
+      padding:4px;
+      font-size:11px;
+      color:var(--text2);
+      font-weight:600;
+      border-left:1px solid var(--border);
+    `}, d.toLocaleDateString(undefined,{weekday:'short'})));
+  });
+  thead.append(trDows);
   const trDays = h('tr');
-  trDays.append(h('th',{style:'position:sticky;left:0;background:var(--bg3);padding:2px 8px;text-align:left;z-index:2'},''));
+  trDays.append(h('th',{style:'position:sticky;left:0;background:var(--bg3);padding:2px 8px;text-align:left;z-index:2'},
+    h('span',{style:'font-size:10px;color:var(--text3);font-weight:400'},'Click a date to sort')));
   dayCols.forEach(d => {
     const isToday = d.toDateString() === new Date().toDateString();
     const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-    const isCurrentMonth = d.getMonth() === firstOfMonth.getMonth();
-    trDays.append(h('th',{style:`
-      background:${isToday ? 'var(--primary)' : 'var(--bg3)'};
-      color:${isToday ? '#fff' : (isWeekend ? 'var(--text3)' : 'var(--text2)')};
-      padding:2px;
-      font-size:10px;
-      font-weight:${isToday ? 700 : 400};
-      opacity:${isCurrentMonth ? 1 : 0.5};
-      min-width:32px;
-    `}, String(d.getDate())));
+    const dk = dateKey(d);
+    const isSortKey = schedulerState.sortByDateKey === dk;
+    const arrow = isSortKey ? (schedulerState.sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+    trDays.append(h('th',{
+      style:`
+        background:${isToday ? 'var(--primary)' : 'var(--bg3)'};
+        color:${isToday ? '#fff' : (isWeekend ? 'var(--text3)' : 'var(--text2)')};
+        padding:4px;
+        font-size:13px;
+        font-weight:${isToday ? 700 : 600};
+        cursor:pointer;
+        ${isSortKey ? 'outline:2px solid var(--primary);outline-offset:-2px;' : ''}
+      `,
+      title: 'Click to sort workers by what they’re assigned to on this date (blanks first)',
+      onclick: () => {
+        if (schedulerState.sortByDateKey === dk) {
+          schedulerState.sortDir = schedulerState.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          schedulerState.sortByDateKey = dk;
+          schedulerState.sortDir = 'asc';
+        }
+        main.innerHTML=''; renderScheduler(main);
+      },
+    }, String(d.getDate()) + arrow));
   });
   thead.append(trDays);
   tbl.append(thead);
@@ -5334,7 +5394,31 @@ async function renderSchedulerByWorker(main) {
   // need to recompute heights.
   const rowBase = schedulerState.byWorkerMode === 'extended' ? 'min-height:36px;vertical-align:top' : 'height:28px';
 
-  workers.forEach(w => {
+  // Click-to-sort: when a date column header is clicked, reorder workers
+  // by what's assigned to them on that date. Blank cells (no assignment)
+  // sort first in 'asc' mode and last in 'desc' mode — so a scheduler
+  // hunting for unstaffed slots can pull all the empties to the top.
+  let sortedWorkers = workers.slice();
+  if (schedulerState.sortByDateKey) {
+    const dk = schedulerState.sortByDateKey;
+    const keyFor = (w) => {
+      const list = (byWorkerByDate.get(w.id) || new Map()).get(dk) || [];
+      if (list.length === 0) return '';
+      return list.map(a => a.project_number || a.project_name || '').sort().join('|');
+    };
+    sortedWorkers.sort((a, b) => {
+      const ka = keyFor(a), kb = keyFor(b);
+      const aBlank = ka === '', bBlank = kb === '';
+      if (aBlank !== bBlank) {
+        // asc: blanks first; desc: blanks last
+        return (schedulerState.sortDir === 'desc') ? (aBlank ? 1 : -1) : (aBlank ? -1 : 1);
+      }
+      const cmp = ka.localeCompare(kb);
+      return (schedulerState.sortDir === 'desc') ? -cmp : cmp;
+    });
+  }
+
+  sortedWorkers.forEach(w => {
     const tr = h('tr',{style:'border-top:1px solid var(--border)'});
     const nameCell = h('td',{style:`position:sticky;left:0;background:var(--bg2);padding:6px 8px;font-weight:500;${rowBase};z-index:1`});
     nameCell.append(h('div',{}, w.first_name + ' ' + w.last_name));

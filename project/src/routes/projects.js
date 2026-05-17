@@ -318,6 +318,28 @@ router.get('/scheduled-list', authorize('projects:read'), async (req, res, next)
     }
 
     const projects = await query.orderBy('projects.start_date');
+
+    // Attach per-day fully_staffed dates so the calendar can render the
+    // green ✓ per cell instead of project-wide. One round-trip total —
+    // no N+1.
+    if (projects.length > 0) {
+      const ids = projects.map(p => p.id);
+      const fsRows = await db('project_day_notes')
+        .whereIn('project_id', ids)
+        .where('fully_staffed', true)
+        .whereBetween('work_date', [from, to])
+        .select('project_id', 'work_date');
+      const byProject = new Map();
+      for (const r of fsRows) {
+        const key = String(r.work_date).slice(0, 10);
+        if (!byProject.has(r.project_id)) byProject.set(r.project_id, new Set());
+        byProject.get(r.project_id).add(key);
+      }
+      for (const p of projects) {
+        p.fully_staffed_dates = Array.from(byProject.get(p.id) || []);
+      }
+    }
+
     res.json({ projects });
   } catch (err) {
     // Log the actual SQL/db error before next() swallows it into a
@@ -805,8 +827,12 @@ router.post('/:id/assignments/copy-day', authorize('projects:update'), async (re
 
     // Atomic replace: delete all non-source-date assignments for this
     // project, then insert the source crew on every other working day.
+    // Also propagate the source day's fully_staffed flag — Pat's rule:
+    // marking a day fully staffed is per-day; Copy-Day is the only path
+    // that broadcasts it project-wide.
     const targetDates = workingDates.filter(d => d !== source_date);
     let inserted = 0;
+    let fullyStaffedPropagated = false;
     await db.transaction(async (trx) => {
       await trx('worker_assignments')
         .where('project_id', project.id)
@@ -828,6 +854,30 @@ router.post('/:id/assignments/copy-day', authorize('projects:update'), async (re
         await trx('worker_assignments').insert(rows);
         inserted = rows.length;
       }
+
+      const sourceDay = await trx('project_day_notes')
+        .where({ project_id: project.id, work_date: source_date })
+        .first();
+      if (sourceDay?.fully_staffed) {
+        fullyStaffedPropagated = true;
+        for (const wd of targetDates) {
+          const existing = await trx('project_day_notes')
+            .where({ project_id: project.id, work_date: wd })
+            .first();
+          if (existing) {
+            await trx('project_day_notes')
+              .where('id', existing.id)
+              .update({ fully_staffed: true, updated_by: req.user.id, updated_at: trx.fn.now() });
+          } else {
+            await trx('project_day_notes').insert({
+              project_id: project.id,
+              work_date: wd,
+              fully_staffed: true,
+              updated_by: req.user.id,
+            });
+          }
+        }
+      }
     });
 
     res.json({
@@ -835,6 +885,7 @@ router.post('/:id/assignments/copy-day', authorize('projects:update'), async (re
       target_dates: targetDates.length,
       crew_size: sourceCrew.length,
       assignments_created: inserted,
+      fully_staffed_propagated: fullyStaffedPropagated,
     });
   } catch (err) { next(err); }
 });
@@ -869,6 +920,7 @@ router.get('/:id/day-notes/:date', authorize('projects:read'), async (req, res, 
       project_id: req.params.id,
       work_date: req.params.date,
       notes: row?.notes || '',
+      fully_staffed: !!row?.fully_staffed,
       updated_at: row?.updated_at || null,
     });
   } catch (err) { next(err); }
@@ -884,25 +936,44 @@ router.put('/:id/day-notes/:date', authorize('projects:update'), async (req, res
     if (req.user.role === ROLES.PROJECT_MANAGER && project.pm_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const notes = (req.body?.notes ?? '').toString();
+
+    // Build a partial update — clients may PUT just notes, just
+    // fully_staffed, or both. Anything omitted is left untouched.
+    const patch = { updated_by: req.user.id, updated_at: db.fn.now() };
+    const insertExtras = {};
+    if (req.body?.notes !== undefined) {
+      patch.notes = String(req.body.notes ?? '');
+      insertExtras.notes = patch.notes;
+    }
+    if (req.body?.fully_staffed !== undefined) {
+      patch.fully_staffed = !!req.body.fully_staffed;
+      insertExtras.fully_staffed = patch.fully_staffed;
+    }
 
     const existing = await db('project_day_notes')
       .where({ project_id: req.params.id, work_date: req.params.date })
       .first();
 
     if (existing) {
-      await db('project_day_notes')
-        .where('id', existing.id)
-        .update({ notes, updated_by: req.user.id, updated_at: db.fn.now() });
+      await db('project_day_notes').where('id', existing.id).update(patch);
     } else {
       await db('project_day_notes').insert({
         project_id: req.params.id,
         work_date: req.params.date,
-        notes, updated_by: req.user.id,
+        updated_by: req.user.id,
+        ...insertExtras,
       });
     }
 
-    res.json({ project_id: req.params.id, work_date: req.params.date, notes });
+    const after = await db('project_day_notes')
+      .where({ project_id: req.params.id, work_date: req.params.date })
+      .first();
+    res.json({
+      project_id: req.params.id,
+      work_date: req.params.date,
+      notes: after?.notes || '',
+      fully_staffed: !!after?.fully_staffed,
+    });
   } catch (err) { next(err); }
 });
 

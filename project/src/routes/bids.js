@@ -683,6 +683,14 @@ async function createProjectFromBid(bid, confirmedFields) {
   try {
     await NotificationService.notifyBidWon(result.bid, result.project);
   } catch { /* notification failure not fatal */ }
+  // Schedule dates aren't carried from the bid — fire a follow-up nudge so
+  // the PM lands in the schedule-edit modal with one click instead of
+  // hunting through the scheduler for the new card.
+  if (!result.project.start_date) {
+    try {
+      await NotificationService.notifyScheduleDatesNeeded(result.project);
+    } catch { /* notification failure not fatal */ }
+  }
 
   return result;
 }

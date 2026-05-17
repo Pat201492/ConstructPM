@@ -117,7 +117,50 @@ exports.seed = async function (knex) {
     role: 'field_staff', active: true, on_schedule: true,
   }).returning('*');
 
-  console.log('  ✅ 13 users created (all password: ChangeMe123!)');
+  // Pat wanted to see the scheduler with a real crew loaded — 80 extra
+  // field staff so the By-Worker grid scrolls and the sort/extend modes
+  // earn their keep. Names pulled from two fixed pools so the same seed
+  // run always produces the same emails (no surprise duplicates if it
+  // re-runs against a stale DB).
+  const bulkFirst = [
+    'Aaron','Adrian','Alberto','Andre','Antonio','Arturo','Benji','Brandon','Brian','Caleb',
+    'Carlos','Charlie','Chris','Damian','Daniel','Darius','Derek','Diego','Dimitri','Eddie',
+    'Eduardo','Eli','Emanuel','Enrique','Eric','Ernesto','Felix','Francisco','Frank','Gabriel',
+    'Gerald','Gilbert','Gus','Hank','Hector','Henry','Hugo','Isaac','Jaden','Javier',
+    'Jermaine','Jesus','Joaquin','Joel','Jonas','Jorge','Jose','Julian','Kareem','Keenan',
+    'Kendrick','Khalid','Lamar','Leon','Leroy','Lewis','Luis','Malik','Manuel','Marco',
+    'Mario','Martin','Matthew','Mauricio','Miguel','Nelson','Nicolas','Omar','Orlando','Pablo',
+    'Pedro','Quincy','Rafael','Ramiro','Raul','Reggie','Ricardo','Roberto','Salvador','Terrence',
+  ];
+  const bulkLast = [
+    'Adams','Aguilar','Alvarez','Bailey','Barker','Barrera','Bishop','Blackburn','Bowen','Bryant',
+    'Burgess','Cabrera','Calderon','Campos','Cardenas','Casey','Castaneda','Castillo','Cervantes','Chen',
+    'Cisneros','Conway','Cortez','Crawford','Cuevas','Daniels','Davis','Delgado','Diaz','Donovan',
+    'Dyer','Eaton','Elder','Espinoza','Estrada','Farley','Fernandez','Figueroa','Flores','Fowler',
+    'Franco','Galindo','Galvan','Garcia','Gibson','Gomez','Gonzalez','Graves','Guerrero','Gutierrez',
+    'Hammond','Hardin','Harvey','Hayes','Hernandez','Herrera','Howell','Ibarra','Jensen','Johnston',
+    'Kane','Keller','Kelley','Lara','Leon','Levy','Lopez','Lozano','Macias','Madison',
+    'Maldonado','Marshall','Martinez','Medina','Mejia','Mendoza','Molina','Montano','Morales','Munoz',
+  ];
+  const bulkRows = [];
+  for (let i = 0; i < 80; i++) {
+    const fn = bulkFirst[i % bulkFirst.length];
+    const ln = bulkLast[(i * 7) % bulkLast.length];
+    const slug = `${fn}.${ln}.${i+1}`.toLowerCase();
+    bulkRows.push({
+      email: `${slug}@company.com`,
+      password_hash: pw,
+      first_name: fn,
+      last_name: ln,
+      initials: (fn[0] + ln[0]).toUpperCase(),
+      role: 'field_staff',
+      active: true,
+      on_schedule: true,
+    });
+  }
+  await knex('users').insert(bulkRows);
+
+  console.log(`  ✅ ${13 + bulkRows.length} users created (all password: ChangeMe123!)`);
 
   // ═══════════════════════════════════════════════════════════
   // CUSTOMERS

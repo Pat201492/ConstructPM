@@ -368,6 +368,35 @@ const NotificationService = {
   },
 
   /**
+   * Schedule-dates-needed notification — fires right after a project is
+   * created (Mark Won / Quick Project) so the PM gets a one-click handoff
+   * into the schedule-edit popup. reference_type 'project_schedule' is
+   * recognized by the SPA notifications handler and opens that modal
+   * directly instead of navigating to the project page.
+   */
+  async notifyScheduleDatesNeeded(project) {
+    const recipients = await this.getPmAndDelegate(project.pm_id);
+    if (recipients.length === 0) return [];
+
+    const numberRow = await db('project_numbers')
+      .where({ project_id: project.id, label: 'Primary' })
+      .first();
+    const label = numberRow?.number || project.name || 'New project';
+
+    return this.send({
+      userIds: recipients,
+      type: 'schedule_dates_needed',
+      category: 'actionable',
+      title: `Set schedule dates: ${label}`,
+      body: `${label} has been created. Click to set the start date, project length, and working days.`,
+      priority: 'high',
+      actionType: 'open_schedule_modal',
+      referenceType: 'project_schedule',
+      referenceId: project.id,
+    });
+  },
+
+  /**
    * Notify when a document extraction is ready for review
    */
   async notifyExtractionReady(extraction) {
