@@ -7,13 +7,18 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0f1117; --bg2: #1a1d27; --bg3: #242833; --bg4: #2e3240;
-  --text: #e8eaed; --text2: #9aa0b0; --text3: #6b7280;
-  --primary: #3b82f6; --primary2: #2563eb; --primary-bg: rgba(59,130,246,0.1);
-  --green: #22c55e; --green-bg: rgba(34,197,94,0.1);
-  --yellow: #eab308; --yellow-bg: rgba(234,179,8,0.1);
-  --red: #ef4444; --red-bg: rgba(239,68,68,0.1);
-  --orange: #f97316; --border: #2e3240;
+  /* Softened palette — Pat asked for less-harsh colors. Backgrounds lifted
+     a touch off near-black; text dialed down from pure white to a soft
+     off-white; accent hues kept but saturation pulled back ~25-30% so the
+     primary/red/yellow/green don't pop quite so aggressively. Each accent
+     keeps its rgba-bg variant in lockstep with the new RGB. */
+  --bg: #181b25; --bg2: #212531; --bg3: #2b303e; --bg4: #353a4b;
+  --text: #dadce4; --text2: #939ab0; --text3: #6c7388;
+  --primary: #6b8fd6; --primary2: #5478c2; --primary-bg: rgba(107,143,214,0.12);
+  --green: #6cb985; --green-bg: rgba(108,185,133,0.12);
+  --yellow: #d4b34c; --yellow-bg: rgba(212,179,76,0.12);
+  --red: #d57a7a; --red-bg: rgba(213,122,122,0.12);
+  --orange: #d18a5a; --border: #353a4b;
   --sidebar-w: 240px; --radius: 8px; --radius-sm: 4px;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -2176,7 +2181,10 @@ async function renderBidQuote(main) {
           markup_pct:markupPct, per_diem_rate:perDiem, lines:lineData,
         })});
         const r = await api('/bids/'+bid.id+'/quick-project',{method:'POST'});
-        alert('Project created. Quote docs generated.');
+        const emailMsg = r.quote_email?.delivered
+          ? ` Quote emailed to PM (via ${r.quote_email.provider}).`
+          : ` Quote email skipped: ${r.quote_email?.reason || 'unknown'}.`;
+        alert('Project created. Quote docs generated.' + emailMsg);
         navigate('project-detail',{id:r.project.id});
       } catch(e) { alert(e.message); }
     }},'Quick Project'));
@@ -4624,7 +4632,7 @@ async function renderSchedule(main) {
   function colorForProject(id) {
     let h = 0;
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-    return `hsl(${h % 360}, 60%, 30%)`;
+    return `hsl(${h % 360}, 40%, 36%)`;
   }
 
   for (let i = 0; i < 42; i++) {
@@ -4983,7 +4991,7 @@ async function renderScheduler(main) {
   function colorForProject(id) {
     let h = 0;
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-    return `hsl(${h % 360}, 60%, 30%)`;
+    return `hsl(${h % 360}, 40%, 36%)`;
   }
 
   const grid = h('div',{style:'display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border)'});
@@ -5334,7 +5342,7 @@ async function renderSchedulerByWorker(main) {
   function colorForProject(id) {
     let hh = 0;
     for (let i = 0; i < id.length; i++) hh = (hh * 31 + id.charCodeAt(i)) >>> 0;
-    return `hsl(${hh % 360}, 60%, 30%)`;
+    return `hsl(${hh % 360}, 40%, 36%)`;
   }
 
   const tbl = h('table',{style:'border-collapse:collapse;font-size:12px;width:100%'});
@@ -5437,7 +5445,19 @@ async function renderSchedulerByWorker(main) {
         ${rowBase};
         border-left:1px solid var(--border);
         position:relative;
-      `});
+        cursor:pointer;
+      `,
+        title: list.length === 0 ? 'Click to assign a project' : 'Click to add another project',
+      });
+      // Click anywhere in the cell that isn't a draggable chip → open
+      // the project picker. The chip drag handlers stopPropagation via
+      // their own event flow, but the existence-check on the closest
+      // ancestor is a belt-and-suspenders guard so picking the cell next
+      // to a chip doesn't accidentally fire when the chip absorbs the drop.
+      td.addEventListener('click', (e) => {
+        if (e.target.closest('[data-assignment-id]')) return;
+        showByWorkerCellAssignPopup(w, dk, () => { main.innerHTML=''; renderScheduler(main); });
+      });
       if (list.length > 0) {
         if (schedulerState.byWorkerMode === 'simplified') {
           // Single project: show its number. Multiple: bright "Multiple"
@@ -5519,6 +5539,93 @@ async function renderSchedulerByWorker(main) {
   });
   tbl.append(tbody);
   wrap.append(tbl);
+}
+
+
+// Picker for the By-Worker grid: click a cell, get a searchable list of
+// projects active on that date, click one to assign this worker to it.
+// Lighter-weight than the per-project popup — meant for the staff
+// schedulers who think "worker first" rather than "project first".
+async function showByWorkerCellAssignPopup(worker, dateKey, onSaved) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:480px;max-height:80vh;display:flex;flex-direction:column'});
+  modal.append(h('h2',{style:'margin-bottom:4px'}, `Assign ${worker.first_name} ${worker.last_name}`));
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:10px'},
+    `For ${dateKey} — pick a project to add this worker to.`));
+
+  const search = h('input',{placeholder:'Search by number, name, or customer…',autocomplete:'off'});
+  modal.append(search);
+
+  const listWrap = h('div',{style:'margin-top:10px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;flex:1;min-height:120px'});
+  listWrap.append(h('div',{style:'color:var(--text2);padding:8px;font-size:13px'}, 'Loading projects…'));
+  modal.append(listWrap);
+
+  const closeRow = h('div',{style:'display:flex;justify-content:flex-end;margin-top:10px;border-top:1px solid var(--border);padding-top:10px'});
+  closeRow.append(h('button',{className:'btn-outline btn-sm',onclick:()=>overlay.remove()},'Cancel'));
+  modal.append(closeRow);
+
+  overlay.append(modal); document.body.append(overlay);
+
+  let projects = [];
+  try {
+    // scheduled-list returns active projects whose working window overlaps
+    // the date. Single-day query: from=to=dateKey.
+    const r = await api(`/projects/scheduled-list?from=${dateKey}&to=${dateKey}`);
+    projects = r.projects || [];
+  } catch (err) {
+    listWrap.innerHTML = '';
+    listWrap.append(h('div',{style:'color:var(--red);padding:8px'}, 'Could not load: ' + err.message));
+    return;
+  }
+
+  function renderList(filter='') {
+    listWrap.innerHTML = '';
+    const q = filter.toLowerCase().trim();
+    const matched = projects.filter(p => {
+      if (!q) return true;
+      return (p.primary_number||'').toLowerCase().includes(q)
+        || (p.name||'').toLowerCase().includes(q)
+        || (p.customer_name||'').toLowerCase().includes(q);
+    });
+    if (matched.length === 0) {
+      listWrap.append(h('div',{style:'color:var(--text2);padding:8px;font-size:13px'},
+        projects.length === 0
+          ? 'No projects scheduled on this date. Set a project’s start date on the calendar first.'
+          : 'No matches.'));
+      return;
+    }
+    matched.forEach(p => {
+      const row = h('div',{
+        style: 'padding:8px 10px;background:var(--bg3);border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px',
+        onmouseover: () => { row.style.background = 'var(--bg4)'; },
+        onmouseout: () => { row.style.background = 'var(--bg3)'; },
+        onclick: async () => {
+          try {
+            await api(`/projects/${p.id}/assignments`, {
+              method: 'POST',
+              body: JSON.stringify({ worker_ids: [worker.id], dates: [dateKey] }),
+            });
+            overlay.remove();
+            if (onSaved) onSaved();
+          } catch (err) { alert(err.message); }
+        },
+      });
+      const left = h('div');
+      left.append(h('div',{style:'font-weight:600;font-size:13px'}, p.primary_number || p.name || 'Project'));
+      left.append(h('div',{style:'font-size:11px;color:var(--text2)'},
+        [p.customer_name || '—', p.name].filter(Boolean).join(' • ')));
+      row.append(left);
+      const target = parseInt(p.manpower, 10) || 0;
+      if (target > 0) {
+        row.append(h('span',{style:'font-size:11px;color:var(--text3);white-space:nowrap'}, `target ${target}`));
+      }
+      listWrap.append(row);
+    });
+  }
+
+  renderList();
+  search.oninput = () => renderList(search.value);
+  setTimeout(() => search.focus(), 50);
 }
 
 

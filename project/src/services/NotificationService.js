@@ -238,6 +238,97 @@ const NotificationService = {
   },
 
   /**
+   * Send a one-shot email with an attached file to a single address. Used
+   * by the Quick Project flow to drop the generated Word quote into the
+   * PM's inbox. Independent of the broader send() pipeline because send()
+   * fans out per-user-preference and never carries attachments.
+   *
+   * @param {Object} opts
+   * @param {string} opts.to        Recipient email
+   * @param {string} opts.subject
+   * @param {string} opts.html      HTML body
+   * @param {string} opts.filePath  Absolute path of file to attach
+   * @param {string} opts.filename  Display filename on the attachment
+   * @param {string} [opts.contentType] MIME — defaults to docx
+   * @returns {Promise<{delivered: boolean, provider: string, reason?: string}>}
+   */
+  async sendEmailWithAttachment({ to, subject, html, filePath, filename, contentType }) {
+    if (!to) return { delivered: false, provider: 'none', reason: 'no recipient' };
+    const fs = require('fs/promises');
+    let fileBuf;
+    try {
+      fileBuf = await fs.readFile(filePath);
+    } catch (err) {
+      return { delivered: false, provider: 'none', reason: `attachment unreadable: ${err.message}` };
+    }
+    const provider = process.env.EMAIL_PROVIDER;
+    const ct = contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
+      const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to }] }],
+          from: { email: process.env.EMAIL_FROM || 'noreply@constructpm.com' },
+          subject,
+          content: [{ type: 'text/html', value: html }],
+          attachments: [{
+            content: fileBuf.toString('base64'),
+            filename,
+            type: ct,
+            disposition: 'attachment',
+          }],
+        }),
+      });
+      if (!response.ok) {
+        const t = await response.text().catch(() => '');
+        return { delivered: false, provider: 'sendgrid', reason: `${response.status} ${t.slice(0,120)}` };
+      }
+      return { delivered: true, provider: 'sendgrid' };
+    }
+
+    // SES path uses SendRawEmailCommand because SendEmailCommand can't
+    // carry attachments. Hand-rolling the MIME envelope keeps the SDK
+    // surface small and avoids pulling in another dep.
+    if (provider === 'ses' && process.env.SES_REGION) {
+      const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
+      const boundary = `mime-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      const from = process.env.EMAIL_FROM || 'noreply@constructpm.com';
+      const raw =
+        `From: ${from}\r\n` +
+        `To: ${to}\r\n` +
+        `Subject: ${subject}\r\n` +
+        `MIME-Version: 1.0\r\n` +
+        `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
+        `${html}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: ${ct}; name="${filename}"\r\n` +
+        `Content-Transfer-Encoding: base64\r\n` +
+        `Content-Disposition: attachment; filename="${filename}"\r\n\r\n` +
+        fileBuf.toString('base64').replace(/(.{76})/g, '$1\r\n') + `\r\n` +
+        `--${boundary}--`;
+      const client = new SESClient({ region: process.env.SES_REGION });
+      try {
+        await client.send(new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw) } }));
+        return { delivered: true, provider: 'ses' };
+      } catch (err) {
+        return { delivered: false, provider: 'ses', reason: err.message };
+      }
+    }
+
+    // No provider configured — log and report back so the API can tell
+    // the caller the email step was skipped (vs. silently lost).
+    console.log(`[NotificationService] EMAIL+ATTACHMENT (dev): To: ${to} | Subject: ${subject} | Attachment: ${filename} (${fileBuf.length} bytes)`);
+    return { delivered: false, provider: 'none', reason: 'no EMAIL_PROVIDER configured' };
+  },
+
+  /**
    * Deliver push notification via Firebase Cloud Messaging
    */
   async _deliverPush(userId, notification) {

@@ -757,7 +757,51 @@ router.post('/:id/quick-project', authorize('bids:mark_won'), async (req, res, n
     };
 
     const result = await createProjectFromBid(bid, confirmed_fields);
-    res.json(result);
+
+    // Email the generated Word quote to the project's PM. The SPA's
+    // Quick Project flow always runs /bids/:id/generate before this,
+    // so word_doc_path is populated. If for some reason it isn't (API
+    // hit directly, template missing, etc.) we surface that as a
+    // non-fatal "skipped" result alongside the project. Email is
+    // intentionally one-shot, no preference plumbing — Quick Project
+    // is a deliberate "spit out the quote" action.
+    let emailResult = { delivered: false, provider: 'none', reason: 'not attempted' };
+    try {
+      const refreshed = await Bid.findById(bid.id);
+      const pm = result.project.pm_id
+        ? await db('users').where({ id: result.project.pm_id }).first()
+        : null;
+      if (refreshed?.word_doc_path && pm?.email) {
+        const primaryRow = await db('project_numbers')
+          .where({ project_id: result.project.id, label: 'Primary' })
+          .first();
+        const projectLabel = primaryRow?.number || result.project.name;
+        const filename = `Bid_${refreshed.bid_number}.docx`;
+        emailResult = await NotificationService.sendEmailWithAttachment({
+          to: pm.email,
+          subject: `Quote for ${projectLabel} — ${refreshed.bid_number}`,
+          html: `
+            <div style="font-family:Arial,sans-serif;max-width:600px">
+              <h2 style="color:#1F4E79;margin-bottom:8px">${projectLabel}</h2>
+              <p>${result.project.name} has been created from bid <strong>${refreshed.bid_number}</strong>.</p>
+              <p>The Word quote is attached. Set the start date and crew size on the scheduler when ready.</p>
+              <hr style="border:1px solid #eee">
+              <p style="color:#999;font-size:12px">Construction PM — Quick Project email</p>
+            </div>`,
+          filePath: refreshed.word_doc_path,
+          filename,
+        });
+      } else if (!refreshed?.word_doc_path) {
+        emailResult = { delivered: false, provider: 'none', reason: 'word doc not generated (no template?)' };
+      } else if (!pm?.email) {
+        emailResult = { delivered: false, provider: 'none', reason: 'project PM has no email' };
+      }
+    } catch (err) {
+      emailResult = { delivered: false, provider: 'none', reason: err.message };
+      console.error('[quick-project] email step:', err.message);
+    }
+
+    res.json({ ...result, quote_email: emailResult });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);
