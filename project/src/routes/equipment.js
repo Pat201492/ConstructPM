@@ -29,6 +29,21 @@ const authenticate = require('../middleware/authenticate');
 const { authorize } = require('../middleware/authorize');
 const Equipment = require('../models/Equipment');
 const db = require('../config/database');
+
+// pg returns DATE columns as JS Date objects. Writing them straight back
+// into an UPDATE via knex stringifies them as "Tue May 18 2026..." which
+// pg rejects as invalid date syntax. Convert through UTC getters when
+// the value is a Date; pass strings through unchanged.
+function ymd(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    const m = String(v.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(v.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
 const FileService = require('../services/FileService');
 const NotificationService = require('../services/NotificationService');
 
@@ -353,8 +368,11 @@ async function recomputeEquipmentRollups(equipmentId) {
     return;
   }
 
-  // service_date = most recent date_of_service
-  const serviceDate = recs[0].date_of_service;
+  // service_date = most recent date_of_service. ymd() because the raw
+  // value from pg is a JS Date; writing it back unconverted is what
+  // produced the "invalid input syntax for type date: Tue May 18" crash
+  // when adding a maintenance record.
+  const serviceDate = ymd(recs[0].date_of_service);
 
   // flag = most recent record's flag (recs already sorted newest-first)
   const flag = recs[0].flag || null;
@@ -362,8 +380,7 @@ async function recomputeEquipmentRollups(equipmentId) {
   // rolled_cert_date: furthest-future cert if any future, else nearest
   // to today (past). Compare on date only.
   const todayStr = new Date().toISOString().slice(0, 10);
-  const certs = recs.map(r => r.cert_date).filter(Boolean)
-    .map(d => String(d).slice(0, 10));
+  const certs = recs.map(r => ymd(r.cert_date)).filter(Boolean);
   let rolledCert = null;
   if (certs.length) {
     const future = certs.filter(d => d >= todayStr).sort(); // ascending

@@ -175,6 +175,69 @@ function h(tag,attrs={},children=[]){const el=document.createElement(tag);Object
 function fmtD(v){return'$'+parseFloat(v||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
 
 // ═══════════════════════════════════════════════════════════
+// SEARCHABLE DROPDOWN — type-to-filter picker for system-data fields
+// ═══════════════════════════════════════════════════════════
+//
+// Pat's rule: any picker fed by system data (projects, customers,
+// locations, contacts, vendors, PMs…) should let the user type to
+// narrow the list rather than scroll a 100-item <select>. The
+// bid-creation form already uses an inline version of this; this
+// module-level helper lets every other form opt in with the same API.
+//
+// Usage:
+//   const drop = searchDrop('etr-project', 'Project', projects,
+//     p => p.primary_number || p.name);
+//   drop.input.onselect = (item) => { ...auto-fill...; };
+//   container.append(drop.group);
+//   // Read selected id from drop.hidden.value (or $('#etr-project').value).
+//
+// The hidden input takes the chosen id; the text input shows the
+// displayFn result. .onselect fires when the user clicks a suggestion
+// (chosen item is passed in). renderList() is exposed in case the
+// caller wants to re-open the suggestion box programmatically.
+function searchDrop(id, label, items, displayFn) {
+  const group = h('div', {className:'form-group'});
+  group.append(h('label', {}, label));
+  const row = h('div', {style:'display:flex;gap:8px'});
+  const input = h('input', {id:id+'-search', placeholder:'Type to search…', autocomplete:'off', style:'flex:1'});
+  const hidden = h('input', {type:'hidden', id});
+  const listDiv = h('div', {id:id+'-list',
+    style:'max-height:200px;overflow-y:auto;background:var(--bg3);border-radius:4px;display:none;position:absolute;z-index:50;width:100%;border:1px solid var(--border)'});
+  const wrapper = h('div', {style:'position:relative;flex:1'});
+  wrapper.append(input); wrapper.append(hidden); wrapper.append(listDiv);
+  row.append(wrapper);
+  group.append(row);
+
+  function renderList(filter='') {
+    listDiv.innerHTML = '';
+    const f = (filter || '').toLowerCase();
+    const matches = items.filter(item => displayFn(item).toLowerCase().includes(f));
+    if (matches.length === 0) { listDiv.style.display = 'none'; return; }
+    matches.slice(0, 30).forEach(item => {
+      const opt = h('div', {
+        style:'padding:6px 10px;cursor:pointer;font-size:13px',
+        onmousedown: (e) => {
+          e.preventDefault();
+          input.value = displayFn(item);
+          hidden.value = item.id;
+          listDiv.style.display = 'none';
+          if (input.onselect) input.onselect(item);
+        },
+      }, displayFn(item));
+      opt.onmouseenter = () => opt.style.background = 'var(--bg4)';
+      opt.onmouseleave = () => opt.style.background = '';
+      listDiv.append(opt);
+    });
+    listDiv.style.display = 'block';
+  }
+  input.onfocus = () => renderList(input.value);
+  input.oninput = () => renderList(input.value);
+  input.onblur = () => setTimeout(() => { listDiv.style.display = 'none'; }, 200);
+
+  return { group, row, input, hidden, renderList };
+}
+
+// ═══════════════════════════════════════════════════════════
 // DATE/TIME FORMATTING — MM/DD/YY default + click for full detail
 // ═══════════════════════════════════════════════════════════
 //
@@ -3634,11 +3697,13 @@ async function renderFieldNotesPage(main) {
   // Filters
   const filterRow=h('div',{style:'display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:end'});
 
-  // Project filter
-  const projSel=h('select',{id:'fn-proj',style:'width:220px'});
-  projSel.append(h('option',{value:''},'All Projects'));
-  try{const{projects}=await api('/projects?limit=100');(projects||[]).forEach(p=>projSel.append(h('option',{value:p.id},p.name)));}catch{}
-  filterRow.append(h('div',{},[h('label',{style:'font-size:12px;color:var(--text2)'},'Project'),projSel]));
+  // Project filter — searchable so a 100-project list is usable.
+  let fnProjects = [];
+  try { const{projects}=await api('/projects?limit=100'); fnProjects = projects || []; } catch {}
+  const fnDrop = searchDrop('fn-proj', 'Project', fnProjects,
+    p => (p.primary_number ? `${p.primary_number} — ${p.name}` : p.name));
+  fnDrop.group.style.width = '260px';
+  filterRow.append(fnDrop.group);
 
   const startInput=makeDateInput({id:'fn-start',style:'width:150px'});
   const endInput=makeDateInput({id:'fn-end',style:'width:150px'});
@@ -3717,22 +3782,24 @@ async function showProjectEditModal(projectId, onSaved) {
   // Name
   form.append(h('div',{className:'form-group full'},[h('label',{},'Project Name'),h('input',{id:'pe-name',value:p.name||''})]));
 
-  // PM dropdown
-  const pmSel=h('select',{id:'pe-pm'});
-  pms.forEach(u=>{const o=h('option',{value:u.id},u.first_name+' '+u.last_name);if(u.id===p.pm_id)o.selected=true;pmSel.append(o);});
-  form.append(h('div',{className:'form-group'},[h('label',{},'Project Manager'),pmSel]));
+  // Searchable PM / Customer / Location pickers — type-to-filter instead
+  // of scrolling. Pre-select the current value by seeding the search
+  // input + hidden field; downstream save reads $('#pe-pm').value etc.
+  const pmDisplay = u => `${u.first_name} ${u.last_name}`;
+  const pmDrop = searchDrop('pe-pm', 'Project Manager', pms, pmDisplay);
+  const currentPm = pms.find(u => u.id === p.pm_id);
+  if (currentPm) { pmDrop.input.value = pmDisplay(currentPm); pmDrop.hidden.value = currentPm.id; }
+  form.append(pmDrop.group);
 
-  // Customer dropdown
-  const custSel=h('select',{id:'pe-cust'});
-  custSel.append(h('option',{value:''},'—'));
-  customers.forEach(c=>{const o=h('option',{value:c.id},c.name);if(c.id===p.customer_id)o.selected=true;custSel.append(o);});
-  form.append(h('div',{className:'form-group'},[h('label',{},'Customer'),custSel]));
+  const custDrop = searchDrop('pe-cust', 'Customer', customers, c => c.name);
+  const currentCust = customers.find(c => c.id === p.customer_id);
+  if (currentCust) { custDrop.input.value = currentCust.name; custDrop.hidden.value = currentCust.id; }
+  form.append(custDrop.group);
 
-  // Location dropdown
-  const locSel=h('select',{id:'pe-loc'});
-  locSel.append(h('option',{value:''},'—'));
-  locations.forEach(l=>{const o=h('option',{value:l.id},l.name);if(l.id===p.location_id)o.selected=true;locSel.append(o);});
-  form.append(h('div',{className:'form-group'},[h('label',{},'Location'),locSel]));
+  const locDrop = searchDrop('pe-loc', 'Location', locations, l => l.name);
+  const currentLoc = locations.find(l => l.id === p.location_id);
+  if (currentLoc) { locDrop.input.value = currentLoc.name; locDrop.hidden.value = currentLoc.id; }
+  form.append(locDrop.group);
 
   // Other fields
   const fields=[
@@ -3953,9 +4020,11 @@ async function etRequest(c){
 
   // ── Ticket / project header fields ──
   const grid=h('div',{className:'form-grid'});
-  const projSel=h('select',{id:'etr-project'});
-  projSel.append(h('option',{value:''},'— Select project —'));
-  projects.forEach(p=>projSel.append(h('option',{value:p.id},(p.primary_number||p.name||p.id))));
+  // Searchable project picker — type a number/name to filter the list
+  // instead of scrolling a flat <select>. Same pattern as the bid form's
+  // contact/customer/location pickers.
+  const projDrop = searchDrop('etr-project', 'Project', projects,
+    p => (p.primary_number || p.name || p.id));
   const pickup=h('input',{id:'etr-pickup',placeholder:'Pick up person'});
   const requestor=h('input',{id:'etr-requestor',placeholder:'Requestor name',value:(S.user?`${S.user.firstName||S.user.first_name||''} ${S.user.lastName||S.user.last_name||''}`.trim():'')});
   const locName=h('input',{id:'etr-locname',placeholder:'Location name'});
@@ -3964,19 +4033,19 @@ async function etRequest(c){
   const scPhone=h('input',{id:'etr-scphone',placeholder:'Site contact phone'});
 
   // Auto-fill location + site contact when a project is chosen
-  projSel.onchange=async()=>{
-    if(!projSel.value){ return; }
+  projDrop.input.onselect = async (p) => {
     try {
-      const r=await api('/projects/'+projSel.value);
-      const p=r.project||r;
-      locName.value=p.location_name||p.address||'';
-      locAddr.value=p.address||'';
-      scName.value=p.site_contact_name||'';
-      scPhone.value=p.site_contact_phone||'';
-    } catch{}
+      const r = await api('/projects/' + p.id);
+      const proj = r.project || r;
+      locName.value = proj.location_name || proj.address || '';
+      locAddr.value = proj.address || '';
+      scName.value = proj.site_contact_name || '';
+      scPhone.value = proj.site_contact_phone || '';
+    } catch {}
   };
 
-  [['Project',projSel],['Pick Up Person',pickup],['Requestor',requestor],
+  grid.append(projDrop.group);
+  [['Pick Up Person',pickup],['Requestor',requestor],
    ['Location Name',locName],['Location Address',locAddr],
    ['Site Contact Name',scName],['Site Contact Phone',scPhone]].forEach(([lab,el])=>{
     grid.append(h('div',{className:'form-group'},[h('label',{},lab),el]));
