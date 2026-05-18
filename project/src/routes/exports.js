@@ -1,15 +1,15 @@
 /**
  * CSV Export Routes
- * 
- * GET  /sources                   — List exportable sources + columns
- * GET  /quickbooks/invoices       — QB bill import CSV
- * GET  /quickbooks/timesheets     — QB timesheet CSV (ST/OT/DT)
- * GET  /quickbooks/purchase-orders — QB PO CSV (with line items)
- * GET  /procore/budget            — Procore budget summary
- * GET  /procore/invoices          — Procore invoice CSV
- * GET  /procore/timecards         — Procore timecard CSV
- * GET  /equipment                 — Equipment inventory CSV
- * POST /custom                    — Custom export (source + columns + filters)
+ *
+ * Hardcoded format exports (integration-specific):
+ *   GET  /quickbooks/invoices, /quickbooks/timesheets, /quickbooks/purchase-orders
+ *   GET  /procore/budget, /procore/invoices, /procore/timecards
+ *   GET  /equipment
+ *
+ * Cross-table column-picker builder (drives the Data Export UI):
+ *   GET  /builder/sources           — Sources + grouped joinable columns
+ *   POST /builder/preview           — First 20 rows preview
+ *   POST /builder/download          — Full CSV download
  */
 
 const express = require('express');
@@ -26,10 +26,6 @@ function sendCSV(res, csv, filename) {
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(csv);
 }
-
-router.get('/sources', (req, res) => {
-  res.json({ sources: ExportService.getAvailableSources() });
-});
 
 router.get('/quickbooks/invoices', async (req, res, next) => {
   try {
@@ -77,15 +73,6 @@ router.get('/equipment', async (req, res, next) => {
   try {
     const csv = await ExportService.equipmentExport(req.query);
     sendCSV(res, csv, `equipment_${Date.now()}.csv`);
-  } catch (err) { next(err); }
-});
-
-router.post('/custom', async (req, res, next) => {
-  try {
-    const { source, columns, filters } = req.body;
-    if (!source) return res.status(400).json({ error: 'source required' });
-    const csv = await ExportService.customExport(source, columns, filters || {});
-    sendCSV(res, csv, `export_${source}_${Date.now()}.csv`);
   } catch (err) { next(err); }
 });
 

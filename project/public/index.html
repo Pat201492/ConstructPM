@@ -6679,141 +6679,286 @@ async function tablesContacts(c) {
 async function renderExports(main) {
   main.append(h('div',{className:'page-header'},[h('h1',{},'Data Export')]));
 
-  const sources=await api('/exports/builder/sources');
-  let selectedSource=null;
-  let selectedColumns=[];
+  const sources = await api('/exports/builder/sources');
 
-  // Top bar: source + dates
-  const topBar=h('div',{style:'display:flex;gap:12px;align-items:end;margin-bottom:20px;flex-wrap:wrap'});
-  const sourceSel=h('select',{id:'exp-source',style:'width:220px'});
+  // ── State ────────────────────────────────────────────────
+  let selectedSource = null;
+  let selectedColumns = []; // ordered keys — drag-to-reorder mutates in place
+  let columnSearch = '';
+
+  // ── Top bar ──────────────────────────────────────────────
+  const topBar = h('div',{style:'display:flex;gap:12px;align-items:end;margin-bottom:20px;flex-wrap:wrap'});
+  const sourceSel = h('select',{id:'exp-source',style:'width:240px'});
   sourceSel.append(h('option',{value:''},'Choose source...'));
   Object.entries(sources).forEach(([key,src])=>sourceSel.append(h('option',{value:key},src.label)));
   topBar.append(h('div',{},[h('label',{style:'font-size:12px;color:var(--text2)'},'Data Source'),sourceSel]));
-  const startInput=makeDateInput({id:'exp-start',style:'width:150px'});
-  const endInput=makeDateInput({id:'exp-end',style:'width:150px'});
+  const startInput = makeDateInput({id:'exp-start',style:'width:140px'});
+  const endInput = makeDateInput({id:'exp-end',style:'width:140px'});
   topBar.append(h('div',{},[h('label',{style:'font-size:12px;color:var(--text2)'},'From'),startInput]));
   topBar.append(h('div',{},[h('label',{style:'font-size:12px;color:var(--text2)'},'To'),endInput]));
   main.append(topBar);
 
-  // Two-panel layout
-  const panels=h('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:20px'});
-  const leftPanel=h('div',{id:'exp-left'});
-  const rightPanel=h('div',{id:'exp-right'});
+  // ── Layout ───────────────────────────────────────────────
+  const panels = h('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:20px'});
+  const leftPanel = h('div',{id:'exp-left'});
+  const rightPanel = h('div',{id:'exp-right'});
   panels.append(leftPanel); panels.append(rightPanel);
   main.append(panels);
 
-  function updateSelected() {
-    selectedColumns=[];
-    $$('#exp-left input.exp-col:checked').forEach(cb=>selectedColumns.push(cb.dataset.col));
-    renderSelectedPanel();
+  // ── Helpers ──────────────────────────────────────────────
+  function findColumnMeta(key) {
+    if (!selectedSource) return { group:'', label:key };
+    const src = sources[selectedSource];
+    for (const g of src.groups) {
+      const c = g.columns.find(c => c.key === key);
+      if (c) return { group: g.group, label: c.label };
+    }
+    return { group:'', label:key };
   }
 
-  function renderSelectedPanel() {
-    rightPanel.innerHTML='';
-    rightPanel.append(h('div',{style:'font-size:14px;font-weight:700;margin-bottom:12px'},'Selected Columns ('+selectedColumns.length+')'));
-    if(selectedColumns.length===0) {
-      rightPanel.append(h('p',{style:'color:var(--text3);font-size:13px'},'Check columns from the tables on the left.'));
+  // ── Right panel: selected columns w/ drag-to-reorder ────
+  function renderRight() {
+    rightPanel.innerHTML = '';
+    rightPanel.append(h('div',{style:'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px'},[
+      h('div',{style:'font-size:14px;font-weight:700'},'Selected Columns ('+selectedColumns.length+')'),
+      h('span',{style:'font-size:11px;color:var(--text3)'},'Drag to reorder — CSV column order matches this list'),
+    ]));
+
+    if (selectedColumns.length === 0) {
+      rightPanel.append(h('p',{style:'color:var(--text3);font-size:13px'},
+        "Check columns on the left. They'll appear here in the order the CSV will use."));
       return;
     }
-    const src=sources[selectedSource];
-    const allCols=[]; src.groups.forEach(g=>g.columns.forEach(c=>allCols.push(c)));
-    const selList=h('div',{style:'margin-bottom:16px;max-height:300px;overflow-y:auto'});
-    selectedColumns.forEach(colKey=>{
-      const def=allCols.find(c=>c.key===colKey);
-      const row=h('div',{style:'display:flex;align-items:center;justify-content:space-between;padding:4px 8px;margin-bottom:2px;background:var(--bg3);border-radius:4px;font-size:12px'});
-      const tbl=colKey.split('.')[0].replace('users_pm','PM').replace('users_est','Estimator').replace('contacts','Contact');
-      row.append(h('span',{},[h('span',{style:'color:var(--primary);font-weight:600'},tbl+'. '),document.createTextNode(def?def.label:colKey.split('.')[1])]));
-      row.append(h('span',{style:'cursor:pointer;color:var(--red);padding:0 4px',onclick:()=>{
-        const cb=document.querySelector('input[data-col="'+colKey+'"]');
-        if(cb) cb.checked=false;
-        updateSelected();
-      }},'×'));
-      selList.append(row);
+
+    const list = h('div',{style:'margin-bottom:16px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--bg2)'});
+
+    selectedColumns.forEach((key, idx) => {
+      const info = findColumnMeta(key);
+      const chip = h('div',{
+        draggable: 'true',
+        style: 'display:flex;align-items:center;gap:8px;padding:6px 10px;margin-bottom:4px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;font-size:12px;cursor:grab;user-select:none',
+      });
+
+      chip.ondragstart = (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(idx));
+        chip.style.opacity = '0.4';
+      };
+      chip.ondragend = () => { chip.style.opacity = '1'; };
+      chip.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        chip.style.borderTop = '2px solid var(--primary)';
+      };
+      chip.ondragleave = () => { chip.style.borderTop = '1px solid var(--border)'; };
+      chip.ondrop = (e) => {
+        e.preventDefault();
+        chip.style.borderTop = '1px solid var(--border)';
+        const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const to = idx;
+        if (Number.isNaN(from) || from === to) return;
+        const moved = selectedColumns.splice(from, 1)[0];
+        selectedColumns.splice(to, 0, moved);
+        renderRight();
+      };
+
+      chip.append(h('span',{style:'color:var(--text3);font-weight:700;font-size:14px;line-height:1'}, '⋮⋮'));
+      chip.append(h('span',{style:'color:var(--primary);font-weight:600'}, info.group + ': '));
+      chip.append(document.createTextNode(info.label));
+      chip.append(h('span',{style:'flex:1'}));
+      chip.append(h('span',{
+        style:'cursor:pointer;color:var(--red);padding:0 4px;font-weight:700;font-size:14px',
+        onclick: () => {
+          selectedColumns.splice(idx, 1);
+          const cb = document.querySelector('input.exp-col[data-col="' + cssEscape(key) + '"]');
+          if (cb) cb.checked = false;
+          // Refresh the relevant group's "all" checkbox too
+          updateGroupAllCheckboxes();
+          renderRight();
+        },
+      },'×'));
+      list.append(chip);
     });
-    rightPanel.append(selList);
-    const actions=h('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'});
+    rightPanel.append(list);
+
+    const actions = h('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'});
     actions.append(h('button',{className:'btn',onclick:doDownload},'Download CSV'));
     actions.append(h('button',{className:'btn-outline',onclick:doPreview},'Preview'));
     actions.append(h('button',{className:'btn-outline',style:'margin-left:auto',onclick:()=>{
+      selectedColumns = [];
       $$('#exp-left input.exp-col').forEach(cb=>{cb.checked=false;});
-      updateSelected();
+      updateGroupAllCheckboxes();
+      renderRight();
     }},'Clear All'));
     rightPanel.append(actions);
     rightPanel.append(h('div',{id:'exp-preview-area'}));
   }
 
-  sourceSel.onchange=()=>{
-    selectedSource=sourceSel.value;
-    leftPanel.innerHTML=''; rightPanel.innerHTML='';
-    if(!selectedSource) return;
-    const src=sources[selectedSource];
-    selectedColumns=[];
-    leftPanel.append(h('div',{style:'font-size:14px;font-weight:700;margin-bottom:12px'},'Available Tables'));
-    src.groups.forEach((group,gi)=>{
-      const card=h('div',{style:'background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden'});
-      const header=h('div',{style:'display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);cursor:pointer;user-select:none'});
-      const allCb=h('input',{type:'checkbox',style:'width:auto'});
-      const arrow=h('span',{style:'color:var(--text3);font-size:11px'},(gi===0)?'▼':'▶');
-      header.append(allCb);
-      header.append(arrow);
-      header.append(h('span',{style:'font-weight:700;font-size:13px;color:var(--primary)'},group.group));
-      header.append(h('span',{style:'font-size:11px;color:var(--text3);margin-left:auto'},group.columns.length+' cols'));
-      card.append(header);
-      const body=h('div',{style:'padding:8px 12px;display:'+(gi===0?'block':'none')});
-      const colCbs=[];
-      group.columns.forEach(col=>{
-        const row=h('label',{style:'display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;cursor:pointer'});
-        const cb=h('input',{type:'checkbox',className:'exp-col',style:'width:auto'});
-        cb.dataset.col=col.key;
-        if(gi===0) cb.checked=true;
-        cb.onchange=()=>{ allCb.checked=colCbs.every(c=>c.checked); updateSelected(); };
-        colCbs.push(cb);
-        row.append(cb); row.append(document.createTextNode(col.label));
-        body.append(row);
-      });
-      card.append(body);
-      header.onclick=(e)=>{
-        if(e.target===allCb) return;
-        const show=body.style.display==='none';
-        body.style.display=show?'block':'none';
-        arrow.textContent=show?'▼':'▶';
-      };
-      allCb.checked=gi===0;
-      allCb.onclick=(e)=>{ e.stopPropagation(); colCbs.forEach(cb=>{cb.checked=allCb.checked;}); updateSelected(); };
-      leftPanel.append(card);
+  // ── Left panel: grouped available columns + search ──────
+  let groupAllCheckboxes = []; // { cb, members: [cbs] }
+
+  function updateGroupAllCheckboxes() {
+    groupAllCheckboxes.forEach(({cb, members}) => {
+      cb.checked = members.length > 0 && members.every(c => c.checked);
     });
-    updateSelected();
+  }
+
+  function renderLeft() {
+    leftPanel.innerHTML = '';
+    if (!selectedSource) {
+      leftPanel.append(h('p',{style:'color:var(--text3);font-size:13px'},
+        'Pick a data source above to see available columns, grouped by their relationship to the source.'));
+      return;
+    }
+
+    leftPanel.append(h('div',{style:'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px'},[
+      h('div',{style:'font-size:14px;font-weight:700'},'Available Columns'),
+      h('span',{style:'font-size:11px;color:var(--text3)'},'Grouped by relationship'),
+    ]));
+
+    const search = h('input',{
+      type:'text', placeholder:'Filter columns…',
+      style:'width:100%;padding:6px 10px;margin-bottom:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px',
+    });
+    search.value = columnSearch;
+    search.oninput = () => { columnSearch = search.value.toLowerCase(); renderGroups(); };
+    leftPanel.append(search);
+
+    const groupsContainer = h('div',{id:'exp-groups'});
+    leftPanel.append(groupsContainer);
+
+    function renderGroups() {
+      groupsContainer.innerHTML = '';
+      groupAllCheckboxes = [];
+      const src = sources[selectedSource];
+
+      src.groups.forEach((group, gi) => {
+        const visibleCols = columnSearch
+          ? group.columns.filter(c => c.label.toLowerCase().includes(columnSearch))
+          : group.columns;
+        if (visibleCols.length === 0) return;
+
+        const isOpenDefault = gi === 0 || !!columnSearch;
+        const card = h('div',{style:'background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden'});
+        const header = h('div',{style:'display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg3);cursor:pointer;user-select:none'});
+        const allCb = h('input',{type:'checkbox',style:'width:auto'});
+        const arrow = h('span',{style:'color:var(--text3);font-size:11px'}, isOpenDefault ? '▼' : '▶');
+        header.append(allCb); header.append(arrow);
+        header.append(h('span',{style:'font-weight:700;font-size:13px;color:var(--primary)'}, group.group));
+        header.append(h('span',{style:'font-size:11px;color:var(--text3);margin-left:auto'},
+          visibleCols.length + ' col' + (visibleCols.length === 1 ? '' : 's')));
+        card.append(header);
+
+        const body = h('div',{style:'padding:6px 12px;display:' + (isOpenDefault ? 'block' : 'none')});
+        const colCbs = [];
+        visibleCols.forEach(col => {
+          const row = h('label',{style:'display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;cursor:pointer'});
+          const cb = h('input',{type:'checkbox',className:'exp-col',style:'width:auto'});
+          cb.dataset.col = col.key;
+          cb.checked = selectedColumns.includes(col.key);
+          cb.onchange = () => {
+            const ix = selectedColumns.indexOf(col.key);
+            if (cb.checked && ix === -1) selectedColumns.push(col.key);
+            else if (!cb.checked && ix !== -1) selectedColumns.splice(ix, 1);
+            updateGroupAllCheckboxes();
+            renderRight();
+          };
+          colCbs.push(cb);
+          row.append(cb); row.append(document.createTextNode(col.label));
+          body.append(row);
+        });
+        card.append(body);
+
+        header.onclick = (e) => {
+          if (e.target === allCb) return;
+          const show = body.style.display === 'none';
+          body.style.display = show ? 'block' : 'none';
+          arrow.textContent = show ? '▼' : '▶';
+        };
+
+        allCb.checked = colCbs.length > 0 && colCbs.every(c => c.checked);
+        allCb.onclick = (e) => {
+          e.stopPropagation();
+          colCbs.forEach(cb => {
+            if (cb.checked === allCb.checked) return;
+            cb.checked = allCb.checked;
+            const k = cb.dataset.col;
+            const ix = selectedColumns.indexOf(k);
+            if (cb.checked && ix === -1) selectedColumns.push(k);
+            else if (!cb.checked && ix !== -1) selectedColumns.splice(ix, 1);
+          });
+          renderRight();
+        };
+
+        groupAllCheckboxes.push({ cb: allCb, members: colCbs });
+        groupsContainer.append(card);
+      });
+    }
+
+    renderGroups();
+  }
+
+  // CSS.escape may not exist everywhere; fall back to a minimal version for
+  // safe attribute-selector usage on column keys (which contain dots).
+  function cssEscape(s) {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c);
+  }
+
+  sourceSel.onchange = () => {
+    selectedSource = sourceSel.value;
+    selectedColumns = [];
+    columnSearch = '';
+    renderLeft();
+    renderRight();
   };
 
   async function doPreview() {
-    if(!selectedSource||selectedColumns.length===0) return alert('Select a source and columns');
-    const area=document.getElementById('exp-preview-area'); if(!area) return;
-    area.innerHTML='Loading...';
+    if (!selectedSource || selectedColumns.length === 0) return alert('Select a source and columns');
+    const area = document.getElementById('exp-preview-area');
+    if (!area) return;
+    area.innerHTML = 'Loading…';
     try {
-      const result=await api('/exports/builder/preview',{method:'POST',body:JSON.stringify({
-        source:selectedSource,columns:selectedColumns,
-        filters:{start_date:readDateInput(startInput)||undefined,end_date:readDateInput(endInput)||undefined}})});
-      area.innerHTML='';
-      area.append(h('p',{style:'font-size:11px;color:var(--text3);margin-bottom:6px'},result.rows.length+' of '+result.total+' rows'));
-      area.append(makeTable(result.headers,result.rows.map(r=>r.map(v=>v==null?'':String(v).substring(0,40)))));
-    } catch(e) { area.innerHTML='<p style="color:var(--red)">'+e.message+'</p>'; }
+      const result = await api('/exports/builder/preview',{method:'POST',body:JSON.stringify({
+        source:selectedSource, columns:selectedColumns,
+        filters:{
+          start_date: readDateInput(startInput) || undefined,
+          end_date: readDateInput(endInput) || undefined,
+        },
+      })});
+      area.innerHTML = '';
+      area.append(h('p',{style:'font-size:11px;color:var(--text3);margin-bottom:6px'},
+        result.rows.length + ' of ' + result.total + ' rows'));
+      area.append(makeTable(result.headers, result.rows.map(r => r.map(v => v == null ? '' : String(v).substring(0,40)))));
+    } catch (e) {
+      area.innerHTML = '<p style="color:var(--red)">' + (e.message || 'Preview failed') + '</p>';
+    }
   }
 
   async function doDownload() {
-    if(!selectedSource||selectedColumns.length===0) return alert('Select a source and columns');
+    if (!selectedSource || selectedColumns.length === 0) return alert('Select a source and columns');
     try {
-      const resp=await fetch('/api/exports/builder/download',{method:'POST',
+      const resp = await fetch('/api/exports/builder/download',{method:'POST',
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.token},
-        body:JSON.stringify({source:selectedSource,columns:selectedColumns,
-          filters:{start_date:readDateInput(startInput)||undefined,end_date:readDateInput(endInput)||undefined}})});
-      const blob=await resp.blob();
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url; a.download=selectedSource+'_export_'+new Date().toISOString().split('T')[0]+'.csv';
-      document.body.append(a);a.click();a.remove();
+        body:JSON.stringify({
+          source:selectedSource, columns:selectedColumns,
+          filters:{
+            start_date: readDateInput(startInput) || undefined,
+            end_date: readDateInput(endInput) || undefined,
+          },
+        })});
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = selectedSource + '_export_' + new Date().toISOString().split('T')[0] + '.csv';
+      document.body.append(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
-    } catch(e) { alert(e.message); }
+    } catch (e) { alert(e.message); }
   }
+
+  renderLeft();
+  renderRight();
 }
 
 // ═══════════════════════════════════════════════════════════
