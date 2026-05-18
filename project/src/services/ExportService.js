@@ -383,46 +383,6 @@ const ExportService = {
     return this.toCSV(headers, data);
   },
 
-  // ── CUSTOM EXPORT ─────────────────────────────────────────
-
-  getAvailableSources() {
-    return [
-      { name: 'invoices', label: 'Invoices', columns: ['invoice_number', 'customer', 'amount', 'invoice_date', 'payment_due_date', 'status', 'project_name'] },
-      { name: 'purchase_orders', label: 'Purchase Orders', columns: ['po_number', 'vendor', 'total', 'order_date', 'status', 'project_name'] },
-      { name: 'timesheets', label: 'Timesheets', columns: ['worker_name', 'classification', 'work_date', 'st_hours', 'ot_hours', 'dt_hours', 'potential_revenue', 'project_name'] },
-      { name: 'projects', label: 'Projects', columns: ['name', 'year', 'status', 'contract_value', 'contract_type', 'payment_terms', 'local_union', 'customer_name', 'pm_name'] },
-      { name: 'bids', label: 'Bids', columns: ['bid_number', 'project_scope', 'status', 'bid_amount', 'markup_pct', 'customer_name', 'location_name'] },
-      { name: 'equipment', label: 'Equipment', columns: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'status', 'certification_date'] },
-      { name: 'customers', label: 'Customers', columns: ['name', 'billing_street', 'billing_town', 'billing_state', 'billing_zip'] },
-      { name: 'locations', label: 'Locations', columns: ['name', 'street', 'town', 'state', 'zip', 'local_union', 'miles_from_hq'] },
-    ];
-  },
-
-  async customExport(source, columns, filters = {}) {
-    const sourceMap = {
-      invoices: () => db('invoices').select('invoices.*', 'projects.name as project_name').join('projects', 'invoices.project_id', 'projects.id'),
-      purchase_orders: () => db('purchase_orders').select('purchase_orders.*', 'projects.name as project_name').join('projects', 'purchase_orders.project_id', 'projects.id'),
-      timesheets: () => db('timesheets').select('timesheets.*', 'projects.name as project_name').join('projects', 'timesheets.project_id', 'projects.id'),
-      projects: () => db('projects').select('projects.*', 'customers.name as customer_name', db.raw("users.first_name||' '||users.last_name as pm_name")).leftJoin('customers', 'projects.customer_id', 'customers.id').leftJoin('users', 'projects.pm_id', 'users.id'),
-      bids: () => db('bids').select('bids.*', 'customers.name as customer_name', 'locations.name as location_name').leftJoin('customers', 'bids.customer_id', 'customers.id').leftJoin('locations', 'bids.location_id', 'locations.id'),
-      equipment: () => db('equipment'),
-      customers: () => db('customers'),
-      locations: () => db('locations'),
-    };
-
-    if (!sourceMap[source]) throw new Error(`Unknown source: ${source}`);
-    const query = sourceMap[source]();
-
-    if (filters.project_id) query.where(`${source}.project_id`, filters.project_id);
-    if (filters.start_date && source === 'timesheets') query.where('work_date', '>=', filters.start_date);
-    if (filters.end_date && source === 'timesheets') query.where('work_date', '<=', filters.end_date);
-
-    const rows = await query;
-    const selectedCols = columns && columns.length > 0 ? columns : Object.keys(rows[0] || {});
-    const data = rows.map(row => selectedCols.map(col => row[col]));
-
-    return this.toCSV(selectedCols, data);
-  },
 };
 
 module.exports = ExportService;
