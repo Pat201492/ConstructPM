@@ -4359,13 +4359,39 @@ async function etMaintenance(c){
     c.append(banner);
   }
 
-  // Search
-  const searchRow=h('div',{style:'display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap'});
-  const sId=h('input',{placeholder:'Equipment ID',style:'width:140px'});
+  // Search + scan-to-jump. Mobile's MaintenanceScreen pops the records
+  // modal as soon as a barcode scan resolves; this is the web parallel —
+  // type or paste an exact barcode and hit Enter to jump straight to
+  // that piece's record modal without scrolling the table.
+  const searchRow=h('div',{style:'display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center'});
+  const sId=h('input',{placeholder:'Equipment ID (Enter to scan)',style:'width:200px'});
   const sType=h('input',{placeholder:'Type',style:'width:140px'});
   const sSub=h('input',{placeholder:'Subtype',style:'width:140px'});
   searchRow.append(sId,sType,sSub);
   c.append(searchRow);
+
+  sId.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const code = sId.value.trim();
+    if (!code) return;
+    // Exact match first (case-insensitive). Falls back to a single
+    // partial match — typing "5" with EQ-005 the only match should
+    // still resolve, but ambiguous prefixes leave the user filtering.
+    const lowered = code.toLowerCase();
+    const exact = equip.find(eq => String(eq.barcode_id||'').toLowerCase() === lowered);
+    let target = exact;
+    if (!target) {
+      const partial = equip.filter(eq => String(eq.barcode_id||'').toLowerCase().includes(lowered));
+      if (partial.length === 1) target = partial[0];
+    }
+    if (target) {
+      showMaintRecords(target, () => etMaintenance(c));
+    } else {
+      sId.style.outline = '2px solid var(--red)';
+      setTimeout(() => { sId.style.outline = ''; }, 1000);
+    }
+  });
 
   const listDiv=h('div');
   c.append(listDiv);

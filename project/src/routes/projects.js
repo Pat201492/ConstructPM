@@ -301,7 +301,7 @@ router.get('/scheduled-list', authorize('projects:read'), async (req, res, next)
       .select(
         'projects.id', 'projects.name', 'projects.start_date',
         'projects.project_length_days', 'projects.manpower',
-        'projects.pm_id', 'projects.status', 'projects.fully_staffed',
+        'projects.pm_id', 'projects.status',
         'pn.primary_number',
         'customers.name as customer_name',
         'project_schedule_overrides.works_saturday',
@@ -574,11 +574,15 @@ router.patch('/:id', authorize('projects:update'), [param('id').isUUID()], async
       return res.status(403).json({ error: 'Forbidden' });
     }
 
+    // fully_staffed intentionally NOT in this list — the flag is per-day
+    // now (project_day_notes.fully_staffed). The column on projects is
+    // dropped by migration 20260518_006; allowing a PATCH to it would
+    // silently diverge from the per-day source of truth.
     const allowedFields = [
       'name', 'year', 'status', 'contract_value', 'contract_type', 'payment_terms',
       'contract_man_hours', 'local_union', 'miles_from_hq', 'start_date', 'end_date',
       'description', 'address', 'pm_id', 'customer_id', 'location_id', 'per_diem_rate',
-      'project_length_days', 'manpower', 'fully_staffed', 'notes',
+      'project_length_days', 'manpower', 'notes',
     ];
     const updates = {};
     for (const f of allowedFields) {
