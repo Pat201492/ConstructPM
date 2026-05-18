@@ -7808,8 +7808,37 @@ function showEditLocationModal(loc, parentC) {
     <div class="form-group"><label>State</label><input id="el-state" value="${(loc.state||'').replace(/"/g,'&quot;')}" maxlength="2" style="text-transform:uppercase"></div>
     <div class="form-group"><label>Zip</label><input id="el-zip" value="${(loc.zip||'').replace(/"/g,'&quot;')}"></div>
     <div class="form-group"><label>Local Union</label><input id="el-union" value="${(loc.local_union||'').replace(/"/g,'&quot;')}"></div>
+    <div class="form-group"><label>Miles from HQ <span style="color:var(--text3);font-weight:normal;font-size:11px">(manual override)</span></label>
+      <div style="display:flex;gap:6px">
+        <input id="el-miles" type="number" step="0.1" min="0" value="${loc.miles_from_hq!=null?loc.miles_from_hq:''}" style="flex:1">
+        <button type="button" id="el-miles-recalc" class="btn-outline btn-sm" style="white-space:nowrap">Recalc from Maps</button>
+      </div>
+    </div>
   `;
   modal.append(form);
+
+  // "Recalc from Maps" — calls the backend recalculate-miles route, which
+  // uses GOOGLE_MAPS_API_KEY to compute distance from the home address.
+  // If the env var isn't set this just returns null; the input stays
+  // unchanged and we surface that in an alert so the user knows.
+  setTimeout(() => {
+    const btn = document.getElementById('el-miles-recalc');
+    if (!btn) return;
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const r = await api('/locations/'+loc.id+'/recalculate-miles',{method:'POST'});
+        if (r.miles_from_hq != null) {
+          document.getElementById('el-miles').value = r.miles_from_hq;
+          btn.textContent = '✓ ' + r.miles_from_hq + ' mi';
+        } else {
+          alert('Could not calculate miles. Set GOOGLE_MAPS_API_KEY and home_location_address in Admin → Global Variables, then try again.');
+          btn.textContent = 'Recalc from Maps';
+        }
+      } catch (e) { alert(e.message); btn.textContent = 'Recalc from Maps'; }
+      btn.disabled = false;
+    };
+  }, 0);
 
   modal.append(h('p',{style:'font-size:11px;color:var(--text3);margin-top:8px'},
     'Note: changing the location code does NOT renumber existing projects. It only affects project numbers generated for new bids/projects from this point on.'));
@@ -7817,6 +7846,7 @@ function showEditLocationModal(loc, parentC) {
   const btns=h('div',{style:'display:flex;gap:12px;margin-top:16px'});
   btns.append(h('button',{className:'btn',onclick:async()=>{
     try {
+      const milesStr = $('#el-miles').value.trim();
       await api('/locations/'+loc.id,{method:'PATCH',body:JSON.stringify({
         name:$('#el-name').value,
         location_code:$('#el-code').value.trim()||null,
@@ -7825,6 +7855,7 @@ function showEditLocationModal(loc, parentC) {
         state:$('#el-state').value.toUpperCase(),
         zip:$('#el-zip').value,
         local_union:$('#el-union').value,
+        miles_from_hq: milesStr === '' ? null : parseFloat(milesStr),
       })});
       overlay.remove();
       adminLocations(parentC);
