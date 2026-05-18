@@ -4885,7 +4885,6 @@ async function refreshEquipmentList(content, canManage) {
       <div class="form-group"><label>Manufacturer</label><input id="eq-mfr"></div>
       <div class="form-group"><label>Type</label><input id="eq-type" placeholder="e.g. Power Tool" list="eq-type-suggestions"></div>
       <div class="form-group"><label>Sub-type</label><input id="eq-subtype" placeholder="e.g. Drill"></div>
-      <div class="form-group"><label>Cost ($)</label><input id="eq-cost" type="number" step="0.01" min="0" value="0"></div>
       <div class="form-group"><label>Cert Date</label><input id="eq-cert" type="date"></div>
       <div class="form-group"><label>Cert Alert (days before expiry)</label><input id="eq-cert-alert" type="number" value="30" min="0"></div>
     </div>
@@ -4903,7 +4902,6 @@ async function refreshEquipmentList(content, canManage) {
           manufacturer: $('#eq-mfr').value || null,
           equipment_type: $('#eq-type').value || null,
           equipment_subtype: $('#eq-subtype').value || null,
-          equipment_cost: parseFloat($('#eq-cost').value) || 0,
           certification_date: $('#eq-cert').value || null,
           cert_expiry_alert_days: parseInt($('#eq-cert-alert').value, 10) || 30,
         })});
@@ -4937,7 +4935,7 @@ async function refreshEquipmentList(content, canManage) {
       return;
     }
 
-    const headers = ['Barcode','Name','Manufacturer','Type','Sub-type','Cost','Status','Cert Date'];
+    const headers = ['Barcode','Name','Manufacturer','Type','Sub-type','Status','Cert Date'];
     if (canManage) headers.push('');  // action column
     content.append(makeConfigTable('equipment_management',
       headers,
@@ -4948,7 +4946,6 @@ async function refreshEquipmentList(content, canManage) {
           e.manufacturer || '—',
           e.equipment_type || '—',
           e.equipment_subtype || '—',
-          fmtD(e.equipment_cost),
           h('span',{className:'status status-'+e.status}, e.status),
           fmtDtClick(e.certification_date),
         ];
@@ -5007,7 +5004,6 @@ async function showEquipmentEditPopup(item, onSaved) {
   field('eqe-mfr', 'Manufacturer', 'text', item.manufacturer);
   field('eqe-type', 'Type', 'text', item.equipment_type);
   field('eqe-subtype', 'Sub-type', 'text', item.equipment_subtype);
-  field('eqe-cost', 'Cost ($)', 'number', item.equipment_cost || 0, {step:'0.01',min:'0'});
   field('eqe-cert', 'Cert Date', 'date', item.certification_date ? String(item.certification_date).split('T')[0] : '');
   field('eqe-cert-alert', 'Cert Alert (days)', 'number', item.cert_expiry_alert_days || 30, {min:'0'});
   modal.append(grid);
@@ -5026,7 +5022,6 @@ async function showEquipmentEditPopup(item, onSaved) {
         manufacturer: $('#eqe-mfr').value || null,
         equipment_type: $('#eqe-type').value || null,
         equipment_subtype: $('#eqe-subtype').value || null,
-        equipment_cost: parseFloat($('#eqe-cost').value) || 0,
         certification_date: $('#eqe-cert').value || null,
         cert_expiry_alert_days: parseInt($('#eqe-cert-alert').value, 10) || 30,
         notes: $('#eqe-notes').value || null,

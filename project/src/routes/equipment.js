@@ -171,7 +171,7 @@ router.post('/mobile/entry', authorize('equipment:read'), async (req, res, next)
     if (existing) {
       item = await Equipment.update(existing.id, payload);
     } else {
-      item = await Equipment.create({ ...payload, equipment_cost: 0, cert_expiry_alert_days: 30 });
+      item = await Equipment.create({ ...payload, cert_expiry_alert_days: 30 });
     }
     res.status(existing ? 200 : 201).json({ item, created: !existing });
   } catch (err) {
@@ -246,10 +246,9 @@ router.post('/', authorize('equipment:manage'),
   [body('barcode_id').trim().notEmpty(), body('equipment_name').trim().notEmpty()],
   async (req, res, next) => {
     try {
-      const { barcode_id, equipment_name, manufacturer, equipment_type, equipment_subtype, equipment_cost, certification_date, cert_expiry_alert_days } = req.body;
+      const { barcode_id, equipment_name, manufacturer, equipment_type, equipment_subtype, certification_date, cert_expiry_alert_days } = req.body;
       const item = await Equipment.create({
         barcode_id, equipment_name, manufacturer, equipment_type, equipment_subtype,
-        equipment_cost: equipment_cost || 0,
         certification_date: certification_date || null,
         cert_expiry_alert_days: cert_expiry_alert_days || 30,
       });
@@ -263,7 +262,7 @@ router.post('/', authorize('equipment:manage'),
 
 router.patch('/:id', authorize('equipment:manage'), async (req, res, next) => {
   try {
-    const allowed = ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_subtype', 'equipment_cost', 'certification_date', 'cert_expiry_alert_days', 'notes'];
+    const allowed = ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_subtype', 'certification_date', 'cert_expiry_alert_days', 'notes'];
     const data = {};
     for (const key of allowed) { if (req.body[key] !== undefined) data[key] = req.body[key]; }
     const item = await Equipment.update(req.params.id, data);
