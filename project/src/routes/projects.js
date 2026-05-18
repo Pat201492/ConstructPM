@@ -1026,9 +1026,9 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
         db.raw("users.first_name || ' ' || users.last_name as name"),
       );
 
-    if (crew.length === 0) {
-      return res.status(400).json({ error: `No workers assigned on ${date} — assign a crew first.` });
-    }
+    // No crew assigned is allowed — the action still runs (sent_to: 0) so
+    // a PM can push the day through even when staffing is incomplete. The
+    // picker UI surfaces staffing warnings; this endpoint stays permissive.
 
     const dayNoteRow = await db('project_day_notes')
       .where({ project_id: project.id, work_date: date })
