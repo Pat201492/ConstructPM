@@ -3,7 +3,7 @@
  * 
  * Customers are companies being billed.
  * Billing address is stored here (separate from job site location).
- * Contact info moved to customer_contacts table.
+ * Contact info moved to contacts table.
  * Display address auto-generated: street, town, state (no zip).
  */
 

@@ -143,7 +143,7 @@ const SOURCES = {
       customers: { type: 'left', on: ['bids.customer_id', 'customers.id'] },
       locations: { type: 'left', on: ['bids.location_id', 'locations.id'] },
       'users as users_est': { type: 'left', on: ['bids.estimator_id', 'users_est.id'] },
-      customer_contacts: { type: 'left', on: ['bids.customer_contact_id', 'customer_contacts.id'] },
+      contacts: { type: 'left', on: ['bids.customer_contact_id', 'contacts.id'] },
     },
     dateColumn: 'bids.bid_date',
     defaultSort: 'bids.bid_date',
@@ -208,13 +208,21 @@ const RELATED_COLUMNS = {
     { key: 'users_est.last_name', label: 'Estimator Last Name' },
     { key: 'users_est.email', label: 'Estimator Email' },
   ],
-  customer_contacts: [
-    { key: 'customer_contacts.name', label: 'Contact Name' },
-    { key: 'customer_contacts.email', label: 'Contact Email' },
-    { key: 'customer_contacts.phone', label: 'Contact Phone' },
-    { key: 'customer_contacts.company', label: 'Contact Company' },
+  contacts: [
+    { key: 'contacts.name', label: 'Contact Name' },
+    { key: 'contacts.email', label: 'Contact Email' },
+    { key: 'contacts.phone', label: 'Contact Phone' },
+    { key: 'contacts.company', label: 'Contact Company' },
   ],
 };
+
+// Note: customer_contacts → contacts table rename happened in migration
+// 20260518_007. Saved export configs (if any persisted) that reference
+// the old `customer_contacts.X` column keys will need to be re-selected
+// from the UI — short of writing a column-key alias layer (which would
+// add a hop on every validation), the cleanest path is to let the
+// export route's "Invalid column" error surface and have the user
+// re-pick. No known persistence of column lists today.
 
 // ═══════════════════════════════════════════════════════════
 // EXPORT BUILDER
@@ -235,7 +243,7 @@ const ExportBuilder = {
         if (relCols) {
           const groupLabel = joinKey.replace('users as users_pm', 'Project Manager')
             .replace('users as users_est', 'Estimator')
-            .replace('customer_contacts', 'Contact')
+            .replace('contacts', 'Contact')
             .replace(/^\w/, c => c.toUpperCase());
           groups.push({ group: groupLabel, columns: relCols });
         }

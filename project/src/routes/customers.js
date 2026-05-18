@@ -2,7 +2,7 @@
  * Customer Routes
  * 
  * Customers are companies with billing addresses.
- * Contact info is in customer_contacts table (separate).
+ * Contact info is in contacts table (separate).
  * Auto-saved when PM types a new customer during bid creation.
  */
 

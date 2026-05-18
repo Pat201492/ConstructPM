@@ -496,10 +496,10 @@ router.get('/import/targets', async (req, res, next) => {
   try {
     const targets = {
       customers: ['name', 'billing_street', 'billing_town', 'billing_state', 'billing_zip'],
-      customer_contacts: ['name', 'email', 'phone', 'company', 'customer_id'],
+      contacts: ['name', 'email', 'phone', 'company', 'customer_id'],
       locations: ['name', 'street', 'town', 'state', 'zip', 'local_union', 'miles_from_hq', 'location_code'],
       // Vendors merged into customers — bulk-import vendor companies via
-      // the 'customers' target; vendor contact info via 'customer_contacts'.
+      // the 'customers' target; vendor contact info via 'contacts'.
       rate_sheet: ['local_union', 'classification', 'st_rate', 'ot_rate', 'dt_rate'],
       equipment: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_subtype', 'equipment_cost', 'certification_date', 'serial_number', 'notes'],
       inventory: ['item_name', 'category', 'sku', 'quantity', 'unit', 'min_stock', 'unit_cost', 'location'],
@@ -523,8 +523,13 @@ router.post('/import', authorize('admin:bulk_import'), async (req, res, next) =>
       return res.status(400).json({ error: 'target and rows array required' });
     }
 
-    const allowedTargets = ['customers', 'customer_contacts', 'locations', 'rate_sheet', 'equipment', 'inventory', 'users'];
-    if (!allowedTargets.includes(target)) {
+    // 'customer_contacts' kept as a back-compat alias for any caller (or
+    // saved import config) that still uses the pre-rename target name.
+    // Maps to the renamed 'contacts' table on insert.
+    const TARGET_ALIASES = { customer_contacts: 'contacts' };
+    const resolvedTarget = TARGET_ALIASES[target] || target;
+    const allowedTargets = ['customers', 'contacts', 'locations', 'rate_sheet', 'equipment', 'inventory', 'users'];
+    if (!allowedTargets.includes(resolvedTarget)) {
       return res.status(400).json({ error: `Invalid target. Allowed: ${allowedTargets.join(', ')}` });
     }
 
@@ -589,13 +594,13 @@ router.post('/import', authorize('admin:bulk_import'), async (req, res, next) =>
     for (let i = 0; i < mappedRows.length; i += batchSize) {
       const batch = mappedRows.slice(i, i + batchSize);
       try {
-        await db(target).insert(batch);
+        await db(resolvedTarget).insert(batch);
         inserted += batch.length;
       } catch (err) {
         // Try row-by-row for this batch to identify duplicates
         for (const row of batch) {
           try {
-            await db(target).insert(row);
+            await db(resolvedTarget).insert(row);
             inserted++;
           } catch {
             skipped++;

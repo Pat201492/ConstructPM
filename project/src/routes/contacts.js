@@ -32,7 +32,7 @@ async function buildContactCode(name, phone) {
   // Loop until we find a free code. Bounded — construction firms have
   // hundreds of contacts, not millions, so this terminates fast.
   // eslint-disable-next-line no-await-in-loop
-  while (await db('customer_contacts').where('contact_code', code).first()) {
+  while (await db('contacts').where('contact_code', code).first()) {
     code = `${base}-${n++}`;
   }
   return code;
@@ -73,7 +73,7 @@ router.post('/',
       if (contact_code && String(contact_code).trim()) {
         // Explicit code supplied — must be globally unique. Hard reject
         // so any add-contact UI surfaces "NO, it has to be unique".
-        const dupe = await db('customer_contacts')
+        const dupe = await db('contacts')
           .where('contact_code', String(contact_code).trim()).first();
         if (dupe) {
           return res.status(409).json({
@@ -105,7 +105,7 @@ router.patch('/:id', authorize('bids:create'), async (req, res, next) => {
     // this same row). Same hard-reject contract as create.
     if (data.contact_code !== undefined && String(data.contact_code).trim()) {
       const code = String(data.contact_code).trim();
-      const dupe = await db('customer_contacts')
+      const dupe = await db('contacts')
         .where('contact_code', code).whereNot('id', req.params.id).first();
       if (dupe) {
         return res.status(409).json({
