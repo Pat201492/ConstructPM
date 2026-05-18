@@ -1009,12 +1009,19 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    // Pull crew + day note + project primary number for the message body
+    // Pull crew + day note + project primary number for the message body.
+    // `email` is added to the select so we can send the HTML body directly
+    // via NotificationService.sendEmail (which doesn't do its own recipient
+    // lookup like NotificationService.send does).
     const crew = await db('worker_assignments as wa')
       .leftJoin('users', 'wa.worker_id', 'users.id')
       .where('wa.project_id', project.id)
       .where('wa.work_date', date)
-      .select('wa.worker_id', db.raw("users.first_name || ' ' || users.last_name as name"));
+      .select(
+        'wa.worker_id',
+        'users.email',
+        db.raw("users.first_name || ' ' || users.last_name as name"),
+      );
 
     if (crew.length === 0) {
       return res.status(400).json({ error: `No workers assigned on ${date} — assign a crew first.` });
@@ -1030,36 +1037,59 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       .first();
     const primaryNumber = primaryRow?.number || project.name;
 
-    // Compose the message body. Day notes are the ONLY notes channel
-    // that goes to the field — project notes are intentionally
-    // EXCLUDED here (they're for PM/accounting payment-tracking notes,
-    // not field comms; see project detail page).
-    const lines = [
-      `Project: ${primaryNumber} — ${project.name}`,
-      project.address ? `Location: ${project.address}` : null,
-      `Date: ${date}`,
-      `Crew (${crew.length}): ${crew.map(c => c.name).filter(Boolean).join(', ')}`,
-      dayNote ? '' : null,
-      dayNote ? `Day notes: ${dayNote.slice(0, 300)}` : null,
-    ].filter(l => l !== null);
-    const body = lines.join('\n');
-
+    // Render the editable email_day_to_staff template once; reuse the
+    // result for every worker. Day notes are the ONLY notes channel that
+    // goes to the field — project notes are intentionally EXCLUDED
+    // (they're PM/accounting payment-tracking notes, not field comms).
     const NotificationService = require('../services/NotificationService');
+    const EmailTemplateService = require('../services/EmailTemplateService');
 
-    // Fan-out to each worker. Email channel routes through whatever
-    // EMAIL_PROVIDER the firm has configured; in-app is always there.
+    const tplVars = {
+      project_number: primaryNumber,
+      project_name: project.name,
+      location: project.address || '',
+      date,
+      crew_count: crew.length,
+      crew_names: crew.map(c => c.name).filter(Boolean).join(', '),
+      // Pre-formatted line so an empty day note doesn't produce a sad
+      // "Day notes: " label in the output. Template just renders {{day_notes}}.
+      day_notes: dayNote ? `Day notes: ${dayNote.slice(0, 300)}` : '',
+    };
+    const rendered = await EmailTemplateService.render('email_day_to_staff', tplVars);
+
+    // Fan-out to each worker. Two channels handled distinctly:
+    //   - in_app: NotificationService.send creates a notifications row +
+    //     does WebSocket push. Uses the plain-text body so the in-app
+    //     view doesn't render raw HTML.
+    //   - email: NotificationService.sendEmail sends the actual HTML body
+    //     (the template-rendered one). Requires us to have the worker's
+    //     email locally, hence the email column in the crew query above.
     await Promise.all(crew.map(c =>
-      NotificationService.send({
-        userId: c.worker_id,
-        category: 'actionable',
-        priority: 'normal',
-        title: `Schedule: ${primaryNumber} on ${date}`,
-        body,
-        referenceType: 'project',
-        referenceId: project.id,
-        actionUrl: `/#/project-detail?id=${project.id}`,
-        channels: ['in_app', 'email'],
-      }).catch(err => console.error('[email-day] worker', c.worker_id, err.message))
+      (async () => {
+        try {
+          await NotificationService.send({
+            userId: c.worker_id,
+            category: 'actionable',
+            priority: 'normal',
+            title: rendered.subject,
+            body: rendered.text || '',
+            referenceType: 'project',
+            referenceId: project.id,
+            actionUrl: `/#/project-detail?id=${project.id}`,
+            channels: ['in_app'],
+          });
+          if (c.email) {
+            await NotificationService.sendEmail({
+              to: c.email,
+              subject: rendered.subject,
+              html: rendered.html,
+              text: rendered.text || undefined,
+            });
+          }
+        } catch (err) {
+          console.error('[email-day] worker', c.worker_id, err.message);
+        }
+      })()
     ));
 
     res.json({ sent_to: crew.length, date });

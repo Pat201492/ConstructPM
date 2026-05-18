@@ -18,7 +18,6 @@ const db = require('../config/database');
 const GlobalVariable = require('../models/GlobalVariable');
 const NotificationService = require('./NotificationService');
 const SavedExportRunner = require('./SavedExportRunner');
-const ProjectBriefingRunner = require('./ProjectBriefingRunner');
 const { parseExpression } = require('cron-parser');
 
 class FileWatcher {
@@ -103,7 +102,6 @@ class FileWatcher {
         this._checkRevenueThreshold(),
         this._checkOilSampleReminders(),
         this._processDueSavedExports(),
-        this._processDueProjectBriefings(),
       ]);
       console.log(`[FileWatcher] Checks complete in ${Date.now() - start}ms`);
     } catch (err) {
