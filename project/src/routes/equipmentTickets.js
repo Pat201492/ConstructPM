@@ -300,13 +300,29 @@ router.post('/:ticketNumber/pickup', authorize('equipment:read'), async (req, re
           ? JSON.parse(firstLine.filled_items) : (firstLine.filled_items || []);
       } catch { filled = []; }
     }
+    // Flip every scanned/typed item over to the project: location label,
+    // status, and current_project_id (so the Equipment master list shows
+    // it as checked out and the project's detail page sees it in
+    // equipment_out). Per Pat's rule the ticket is the authoritative
+    // hand-off — pickup is the only place this transition happens.
+    // Match by barcode_id always; also try id only when the value looks
+    // like a UUID — otherwise pg rejects the string with "invalid input
+    // syntax for type uuid" and the whole transaction blows up. That
+    // crash existed pre-fully_staffed too; the merge here just made it
+    // user-visible.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     for (const f of filled) {
       const num = f.equipment_number || f.barcode_id || f.equipment_id;
       if (!num) continue;
       await db('equipment')
-        .where('barcode_id', num).orWhere('id', num)
+        .where(function () {
+          this.where('barcode_id', num);
+          if (UUID_RE.test(String(num))) this.orWhere('id', num);
+        })
         .update({
           current_location: project.project_number || 'project',
+          current_project_id: project.project_id || null,
+          status: 'checked_out',
           status_change_date: today,
           updated_at: db.fn.now(),
         });

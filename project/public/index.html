@@ -4248,87 +4248,202 @@ async function showMaintRecords(equip){
 }
 
 // ── Subtab 3: Active Tickets (McDonald's board) ──────────────
+//
+// Polls every 5s for mobile-scan updates so the board reflects new
+// scanned items without the user hitting refresh. The interval self-
+// cancels when its container is detached (sub-tab change or page
+// navigation) — see the document.contains check inside the loop.
 async function etActiveTickets(c){
   c.innerHTML='<p>Loading…</p>';
-  let data={count:0,tickets:[]};
-  try { data=await api('/equipment-tickets/active'); } catch(e){ c.innerHTML=''; c.append(h('p',{style:'color:var(--red)'},e.message)); return; }
+  let lastSignature = '';
 
-  c.innerHTML='';
-  const hdr=h('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'});
-  hdr.append(h('div',{style:'color:var(--text2);font-size:13px'},'Tap a ticket to expand. Mark as picked up when the crew collects it.'));
-  hdr.append(h('div',{style:'background:var(--primary);color:#fff;padding:10px 18px;border-radius:8px;font-weight:700;font-size:16px'},
-    `${data.count} Active`));
-  c.append(hdr);
+  async function load() {
+    let data={count:0,tickets:[]};
+    try { data=await api('/equipment-tickets/active'); }
+    catch(e){ c.innerHTML=''; c.append(h('p',{style:'color:var(--red)'},e.message)); return; }
 
-  if(data.tickets.length===0){
-    c.append(h('p',{style:'color:var(--text2);font-style:italic'},'No active tickets.'));
-    return;
+    // Cheap change-detection so polling doesn't churn the DOM (which
+    // would steal focus from any input the user happens to be editing).
+    const sig = JSON.stringify(data.tickets.map(t => [
+      t.ticket_number, t.status, t.total_quantity,
+      t.lines.map(l => l.filled_items),
+    ]));
+    if (sig === lastSignature) return;
+    lastSignature = sig;
+
+    c.innerHTML='';
+    const hdr=h('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'});
+    hdr.append(h('div',{style:'color:var(--text2);font-size:13px'},
+      'Tap a ticket to expand. Mobile scans and manual entries flow in below; mark picked up when the crew collects it.'));
+    hdr.append(h('div',{style:'background:var(--primary);color:#fff;padding:10px 18px;border-radius:8px;font-weight:700;font-size:16px'},
+      `${data.count} Active`));
+    c.append(hdr);
+
+    if(data.tickets.length===0){
+      c.append(h('p',{style:'color:var(--text2);font-style:italic'},'No active tickets.'));
+      return;
+    }
+
+    const board=h('div',{style:'display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start'});
+    data.tickets.forEach(t=>{
+      const card=h('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;width:260px;cursor:pointer'});
+      const top=h('div',{style:'display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px'});
+      top.append(h('span',{},'#'+t.ticket_number+' · '+(t.project_number||'—')));
+      top.append(h('span',{style:'background:var(--primary);color:#fff;border-radius:12px;padding:1px 9px;font-size:12px'},String(t.total_quantity)));
+      card.append(top);
+      if(t.status==='filled') card.append(h('div',{style:'font-size:11px;color:#2e7d32;margin-bottom:6px'},'✓ Filled'));
+      const mini=h('table',{style:'width:100%;font-size:12px'});
+      t.lines.slice(0,6).forEach(l=>{
+        const tr=h('tr');
+        tr.innerHTML=`<td style="width:30px">${l.quantity}</td><td>${l.equipment_name||l.equipment_type||'—'}</td>`;
+        mini.append(tr);
+      });
+      card.append(mini);
+      let filled=[];
+      if(t.lines[0]){ try{ filled=typeof t.lines[0].filled_items==='string'?JSON.parse(t.lines[0].filled_items):(t.lines[0].filled_items||[]); }catch{} }
+      if(filled.length){
+        card.append(h('div',{style:'margin-top:8px;font-size:11px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px'},
+          'Scanned: '+filled.map(f=>f.equipment_number||f.barcode_id).filter(Boolean).join(', ')));
+      }
+      card.onclick=()=>showTicketFull(t.ticket_number);
+      board.append(card);
+    });
+    c.append(board);
   }
 
-  const board=h('div',{style:'display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start'});
-  data.tickets.forEach(t=>{
-    const card=h('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;width:260px;cursor:pointer'});
-    const top=h('div',{style:'display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px'});
-    top.append(h('span',{},'#'+t.ticket_number+' · '+(t.project_number||'—')));
-    top.append(h('span',{style:'background:var(--primary);color:#fff;border-radius:12px;padding:1px 9px;font-size:12px'},String(t.total_quantity)));
-    card.append(top);
-    if(t.status==='filled') card.append(h('div',{style:'font-size:11px;color:#2e7d32;margin-bottom:6px'},'✓ Filled'));
-    const mini=h('table',{style:'width:100%;font-size:12px'});
-    t.lines.slice(0,6).forEach(l=>{
-      const tr=h('tr');
-      tr.innerHTML=`<td style="width:30px">${l.quantity}</td><td>${l.equipment_name||l.equipment_type||'—'}</td>`;
-      mini.append(tr);
-    });
-    card.append(mini);
-    // Filled/scanned list at the bottom
-    let filled=[];
-    if(t.lines[0]){ try{ filled=typeof t.lines[0].filled_items==='string'?JSON.parse(t.lines[0].filled_items):(t.lines[0].filled_items||[]); }catch{} }
-    if(filled.length){
-      card.append(h('div',{style:'margin-top:8px;font-size:11px;color:var(--text2);border-top:1px solid var(--border);padding-top:6px'},
-        'Scanned: '+filled.map(f=>f.equipment_number||f.barcode_id).filter(Boolean).join(', ')));
+  await load();
+  // Self-terminating poll. Every tick verifies the container is still
+  // in the DOM — when the user changes sub-tab or navigates away the
+  // body element is detached and the loop exits.
+  (async function poll() {
+    while (document.contains(c)) {
+      await new Promise(r => setTimeout(r, 5000));
+      if (!document.contains(c)) break;
+      try { await load(); } catch {}
     }
-    card.onclick=()=>showTicketFull(t.ticket_number);
-    board.append(card);
-  });
-  c.append(board);
+  })();
 }
 
 async function showTicketFull(tn){
   const overlay=h('div',{className:'modal-overlay'});
-  const modal=h('div',{className:'modal',style:'max-width:720px'});
+  const modal=h('div',{className:'modal',style:'max-width:720px;max-height:90vh;overflow-y:auto'});
   modal.append(h('p',{},'Loading…'));
   overlay.append(modal); document.body.append(overlay);
-  let d;
-  try { d=await api('/equipment-tickets/'+tn); }
-  catch(e){ modal.innerHTML=''; modal.append(h('p',{style:'color:var(--red)'},e.message)); return; }
 
-  const p=d.project;
-  modal.innerHTML='';
-  modal.append(h('h2',{},'Ticket #'+tn));
-  const info=h('div',{style:'font-size:13px;line-height:1.7;margin-bottom:14px'});
-  info.innerHTML=`
-    <strong>Project:</strong> ${p.project_number||'—'}<br>
-    <strong>Pick Up Person:</strong> ${p.pickup_person||'—'}<br>
-    <strong>Requestor:</strong> ${p.requestor_name||'—'}<br>
-    <strong>Location:</strong> ${p.location_name||'—'}<br>
-    <strong>Address:</strong> ${p.location_address||'—'}<br>
-    <strong>Site Contact:</strong> ${p.site_contact_name||'—'} ${p.site_contact_phone||''}<br>
-    <strong>Status:</strong> ${p.status}`;
-  modal.append(info);
-  modal.append(makeTable(['Qty','Type','Subtype','Equipment','Manufacturer'],
-    d.lines.map(l=>[l.quantity,l.equipment_type||'—',l.equipment_subtype||'—',l.equipment_name||'—',l.manufacturer||'—'])));
+  async function render() {
+    let d;
+    try { d=await api('/equipment-tickets/'+tn); }
+    catch(e){ modal.innerHTML=''; modal.append(h('p',{style:'color:var(--red)'},e.message)); return; }
 
-  const actions=h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:16px'});
-  actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Close'));
-  actions.append(h('button',{className:'btn',onclick:async()=>{
-    if(!confirm('Mark ticket #'+tn+' as picked up? This sets equipment locations to the project, archives the ticket, generates the PDF, and removes it from the active board.')) return;
-    try {
-      await api('/equipment-tickets/'+tn+'/pickup',{method:'POST'});
-      overlay.remove();
-      navigate('equipment-tickets',{sub:'Active Tickets'});
-    } catch(e){ alert(e.message); }
-  }},'Mark as Picked Up'));
-  modal.append(actions);
+    const p=d.project;
+    // Decode the current scanned/filled-items list. Same shape as the
+    // mobile /fill payload — { equipment_number, equipment_name?,
+    // source? } — so web entries and mobile scans live in the same list.
+    let filled=[];
+    if(d.lines && d.lines[0]){
+      try {
+        filled = typeof d.lines[0].filled_items==='string'
+          ? JSON.parse(d.lines[0].filled_items) : (d.lines[0].filled_items||[]);
+      } catch {}
+    }
+
+    modal.innerHTML='';
+    modal.append(h('h2',{},'Ticket #'+tn));
+    const info=h('div',{style:'font-size:13px;line-height:1.7;margin-bottom:14px'});
+    info.innerHTML=`
+      <strong>Project:</strong> ${p.project_number||'—'}<br>
+      <strong>Pick Up Person:</strong> ${p.pickup_person||'—'}<br>
+      <strong>Requestor:</strong> ${p.requestor_name||'—'}<br>
+      <strong>Location:</strong> ${p.location_name||'—'}<br>
+      <strong>Address:</strong> ${p.location_address||'—'}<br>
+      <strong>Site Contact:</strong> ${p.site_contact_name||'—'} ${p.site_contact_phone||''}<br>
+      <strong>Status:</strong> ${p.status}`;
+    modal.append(info);
+
+    modal.append(h('h3',{style:'font-size:14px;margin:8px 0 6px'},'Requested'));
+    modal.append(makeTable(['Qty','Type','Subtype','Equipment','Manufacturer'],
+      d.lines.map(l=>[l.quantity,l.equipment_type||'—',l.equipment_subtype||'—',l.equipment_name||'—',l.manufacturer||'—'])));
+
+    // ─── Scanned / Tagged-Out section ─────────────────────────
+    // Lists every equipment ID flowing in from mobile scans or web
+    // manual entries. Polled by etActiveTickets every 5s; the modal
+    // also auto-refreshes on add so the latest list is always visible.
+    modal.append(h('h3',{style:'font-size:14px;margin:18px 0 6px'},
+      `Tagged out (${filled.length})`));
+    if (filled.length === 0) {
+      modal.append(h('p',{style:'color:var(--text2);font-style:italic;font-size:13px;margin-bottom:8px'},
+        'Nothing tagged yet. Mobile scans appear here; add manually with the input below.'));
+    } else {
+      modal.append(makeTable(['#','Equipment ID','Source',''],
+        filled.map((f,idx)=>[
+          idx+1,
+          h('span',{style:'font-family:JetBrains Mono;font-size:12px'},
+            String(f.equipment_number||f.barcode_id||'—')),
+          h('span',{style:'color:var(--text2);font-size:12px'}, f.source||'mobile'),
+          h('button',{className:'btn-red btn-sm',style:'padding:2px 8px',onclick:async()=>{
+            const next = filled.filter((_,i)=>i!==idx);
+            try {
+              await api('/equipment-tickets/'+tn+'/fill',{method:'POST',
+                body: JSON.stringify({items: next})});
+              await render();
+            } catch(e){ alert(e.message); }
+          }},'×'),
+        ])));
+    }
+
+    // Manual web entry — type or paste an equipment ID, hit Add (or
+    // Enter). Appends to the existing filled_items so mobile + web
+    // entries coexist. No client-side validation: the pickup-time
+    // lookup uses barcode_id OR id, and unknown values are surfaced
+    // visibly enough on the modal for the user to catch typos.
+    const addRow=h('div',{style:'display:flex;gap:6px;margin:8px 0 14px'});
+    const idInput=h('input',{placeholder:'Equipment ID / barcode', style:'flex:1'});
+    const addBtn=h('button',{className:'btn btn-sm',onclick:async()=>{
+      const v=idInput.value.trim();
+      if(!v) return;
+      const next = [...filled, { equipment_number: v, source: 'web' }];
+      try {
+        await api('/equipment-tickets/'+tn+'/fill',{method:'POST',
+          body: JSON.stringify({items: next})});
+        idInput.value='';
+        await render();
+      } catch(e){ alert(e.message); }
+    }},'+ Add');
+    idInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); addBtn.click(); } });
+    addRow.append(idInput); addRow.append(addBtn);
+    modal.append(addRow);
+
+    const actions=h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:16px'});
+    actions.append(h('button',{className:'btn-outline',onclick:()=>{ stopPoll=true; overlay.remove(); }},'Close'));
+    actions.append(h('button',{className:'btn',onclick:async()=>{
+      if(!confirm('Mark ticket #'+tn+' as picked up? This sets equipment locations to the project, archives the ticket, generates the PDF, and removes it from the active board.')) return;
+      try {
+        await api('/equipment-tickets/'+tn+'/pickup',{method:'POST'});
+        stopPoll=true;
+        overlay.remove();
+        navigate('equipment-tickets',{sub:'Active Tickets'});
+      } catch(e){ alert(e.message); }
+    }},'Mark as Picked Up'));
+    modal.append(actions);
+  }
+
+  await render();
+
+  // Light polling inside the modal too so a mobile scan that happens
+  // while the modal is open surfaces immediately. Stops when the modal
+  // closes (stopPoll) or the overlay is detached for any other reason.
+  let stopPoll = false;
+  (async function poll(){
+    while (!stopPoll && document.body.contains(overlay)) {
+      await new Promise(r => setTimeout(r, 5000));
+      if (stopPoll || !document.body.contains(overlay)) break;
+      // Skip re-render if the user is mid-typing in the add input so
+      // we don't yank focus.
+      const active = document.activeElement;
+      if (active && active.tagName === 'INPUT' && active.value.trim()) continue;
+      try { await render(); } catch {}
+    }
+  })();
 }
 
 async function renderEquipment(main) {
