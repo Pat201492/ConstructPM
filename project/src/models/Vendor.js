@@ -4,7 +4,7 @@ const db = require('../config/database');
 // This model keeps a vendor-shaped API so PO routes / Admin Vendors page
 // don't have to be rewritten: it reads/writes the customers table and
 // translates fields (street -> billing_street, etc.). Contact info from
-// the legacy vendor form is stored as a customer_contacts row.
+// the legacy vendor form is stored as a contacts row.
 const Vendor = {
   async findAll({ active = true, search, limit = 200, offset = 0 } = {}) {
     let q = db('customers').orderBy('name', 'asc');
@@ -33,7 +33,7 @@ const Vendor = {
     const [customer] = await db('customers').insert(insertCustomer).returning('*');
 
     if (data.contact_name || data.email || data.phone) {
-      await db('customer_contacts').insert({
+      await db('contacts').insert({
         customer_id: customer.id,
         name: (data.contact_name || data.name || '').slice(0, 255),
         email: data.email ? String(data.email).slice(0, 255) : null,

@@ -6726,7 +6726,7 @@ async function renderExports(main) {
     selectedColumns.forEach(colKey=>{
       const def=allCols.find(c=>c.key===colKey);
       const row=h('div',{style:'display:flex;align-items:center;justify-content:space-between;padding:4px 8px;margin-bottom:2px;background:var(--bg3);border-radius:4px;font-size:12px'});
-      const tbl=colKey.split('.')[0].replace('users_pm','PM').replace('users_est','Estimator').replace('customer_contacts','Contact');
+      const tbl=colKey.split('.')[0].replace('users_pm','PM').replace('users_est','Estimator').replace('contacts','Contact');
       row.append(h('span',{},[h('span',{style:'color:var(--primary);font-weight:600'},tbl+'. '),document.createTextNode(def?def.label:colKey.split('.')[1])]));
       row.append(h('span',{style:'cursor:pointer;color:var(--red);padding:0 4px',onclick:()=>{
         const cb=document.querySelector('input[data-col="'+colKey+'"]');

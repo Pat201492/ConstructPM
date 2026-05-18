@@ -29,14 +29,14 @@ const Bid = {
         'locations.name as location_name',
         'locations.display_address as location_address',
         'locations.local_union as location_local_union',
-        'customer_contacts.name as contact_name',
+        'contacts.name as contact_name',
         'won_proj.won_project_number',
         db.raw("users.first_name || ' ' || users.last_name as estimator_name"),
         db.raw("pm.first_name || ' ' || pm.last_name as assigned_pm_name"),
       )
       .leftJoin('customers', 'bids.customer_id', 'customers.id')
       .leftJoin('locations', 'bids.location_id', 'locations.id')
-      .leftJoin('customer_contacts', 'bids.customer_contact_id', 'customer_contacts.id')
+      .leftJoin('contacts', 'bids.customer_contact_id', 'contacts.id')
       .leftJoin('users', 'bids.estimator_id', 'users.id')
       .leftJoin('users as pm', 'bids.assigned_pm_id', 'pm.id')
       .leftJoin(primaryNumberSub, 'bids.id', 'won_proj.bid_id')
@@ -96,10 +96,10 @@ const Bid = {
         'locations.display_address as location_address',
         'locations.local_union as location_local_union',
         'locations.miles_from_hq as location_miles',
-        'customer_contacts.name as contact_name',
-        'customer_contacts.phone as contact_phone',
-        'customer_contacts.email as contact_email',
-        'customer_contacts.company as contact_company',
+        'contacts.name as contact_name',
+        'contacts.phone as contact_phone',
+        'contacts.email as contact_email',
+        'contacts.company as contact_company',
         db.raw("users.first_name || ' ' || users.last_name as estimator_name"),
         'users.email as estimator_email',
         'users.initials as estimator_initials',
@@ -109,7 +109,7 @@ const Bid = {
       )
       .leftJoin('customers', 'bids.customer_id', 'customers.id')
       .leftJoin('locations', 'bids.location_id', 'locations.id')
-      .leftJoin('customer_contacts', 'bids.customer_contact_id', 'customer_contacts.id')
+      .leftJoin('contacts', 'bids.customer_contact_id', 'contacts.id')
       .leftJoin('users', 'bids.estimator_id', 'users.id')
       .leftJoin('users as pm', 'bids.assigned_pm_id', 'pm.id')
       .where('bids.id', id)

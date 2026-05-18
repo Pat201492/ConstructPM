@@ -179,7 +179,7 @@ router.post('/',
       const effectiveSiteContactId = site_contact_id || customer_contact_id || null;
       let siteContactName = null, siteContactPhone = null;
       if (effectiveSiteContactId) {
-        const sc = await db('customer_contacts').where('id', effectiveSiteContactId).first();
+        const sc = await db('contacts').where('id', effectiveSiteContactId).first();
         if (sc) { siteContactName = sc.name; siteContactPhone = sc.phone || null; }
       }
 

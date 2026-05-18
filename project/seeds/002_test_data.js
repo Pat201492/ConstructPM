@@ -178,7 +178,7 @@ exports.seed = async function (knex) {
   // ═══════════════════════════════════════════════════════════
   // CONTACTS
   // ═══════════════════════════════════════════════════════════
-  await knex('customer_contacts').insert([
+  await knex('contacts').insert([
     { customer_id: customers[0].id, name: 'Dave Morrison', email: 'dmorrison@turner.com', phone: '212-555-0101', company: 'Turner Construction' },
     { customer_id: customers[0].id, name: 'Lisa Park', email: 'lpark@turner.com', phone: '212-555-0102', company: 'Turner Construction' },
     { customer_id: customers[1].id, name: 'Erik Johansson', email: 'ejohansson@skanska.com', phone: '212-555-0201', company: 'Skanska USA' },
@@ -629,7 +629,7 @@ exports.seed = async function (knex) {
     billing_state: v.state,
     billing_zip: v.zip,
   }))).returning('*');
-  await knex('customer_contacts').insert(vendorCompanies.map((c, i) => ({
+  await knex('contacts').insert(vendorCompanies.map((c, i) => ({
     customer_id: c.id,
     name: vendorSeed[i].contact_name,
     email: vendorSeed[i].email,
