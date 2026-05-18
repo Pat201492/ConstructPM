@@ -3996,22 +3996,30 @@ async function etRequest(c){
   tbl.append(tb);
   c.append(tbl);
 
-  function optionList(arr,val){
-    return ['<option value=""></option>'].concat(
-      [...new Set(arr.filter(Boolean))].sort().map(v=>`<option${v===val?' selected':''}>${v}</option>`)
-    ).join('');
+  // Datalist-backed inputs so the picker filters as you type. The four
+  // equipment fields are bidirectional: changing any one narrows the
+  // pool of matching items, and if exactly one item is left we backfill
+  // the other three from it. Lets users start from whichever field they
+  // know best (name, manufacturer, subtype...) without re-picking the
+  // cascade top-down.
+  function datalistOptions(arr){
+    return [...new Set(arr.filter(Boolean))].sort().map(v=>`<option value="${(v+'').replace(/"/g,'&quot;')}"></option>`).join('');
+  }
+  function matchingItems(line){
+    return (opts.items||[]).filter(it =>
+      (!line.equipment_type || it.equipment_type === line.equipment_type) &&
+      (!line.equipment_subtype || it.equipment_subtype === line.equipment_subtype) &&
+      (!line.equipment_name || it.equipment_name === line.equipment_name) &&
+      (!line.manufacturer || it.manufacturer === line.manufacturer)
+    );
   }
   function filteredOpts(line){
-    // Reduce the option pool based on what's already chosen on this line
-    let items=opts.items||[];
-    if(line.equipment_type) items=items.filter(i=>i.equipment_type===line.equipment_type);
-    if(line.equipment_subtype) items=items.filter(i=>i.equipment_subtype===line.equipment_subtype);
-    if(line.equipment_name) items=items.filter(i=>i.equipment_name===line.equipment_name);
+    const items = matchingItems(line);
     return {
-      types:[...new Set((opts.items||[]).map(i=>i.equipment_type))],
-      subtypes:[...new Set(items.map(i=>i.equipment_subtype))],
-      names:[...new Set(items.map(i=>i.equipment_name))],
-      manufacturers:[...new Set(items.map(i=>i.manufacturer))],
+      types: [...new Set(items.map(i=>i.equipment_type))],
+      subtypes: [...new Set(items.map(i=>i.equipment_subtype))],
+      names: [...new Set(items.map(i=>i.equipment_name))],
+      manufacturers: [...new Set(items.map(i=>i.manufacturer))],
     };
   }
   function renderLines(){
@@ -4021,36 +4029,54 @@ async function etRequest(c){
       const tr=h('tr');
       tr.innerHTML=`
         <td><input type="text" inputmode="numeric" value="${parseInt(ln.quantity)||1}" data-i="${i}" data-f="quantity" style="width:50px"></td>
-        <td><select data-i="${i}" data-f="equipment_type" style="max-width:160px">${optionList(fo.types,ln.equipment_type)}</select></td>
-        <td><select data-i="${i}" data-f="equipment_subtype" style="max-width:160px">${optionList(fo.subtypes,ln.equipment_subtype)}</select></td>
-        <td><select data-i="${i}" data-f="equipment_name" style="max-width:200px">${optionList(fo.names,ln.equipment_name)}</select></td>
-        <td><select data-i="${i}" data-f="manufacturer" style="max-width:160px">${optionList(fo.manufacturers,ln.manufacturer)}</select></td>
+        <td><input data-i="${i}" data-f="equipment_type" list="etr-types-${i}" value="${(ln.equipment_type||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:160px">
+            <datalist id="etr-types-${i}">${datalistOptions(fo.types)}</datalist></td>
+        <td><input data-i="${i}" data-f="equipment_subtype" list="etr-subs-${i}" value="${(ln.equipment_subtype||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:160px">
+            <datalist id="etr-subs-${i}">${datalistOptions(fo.subtypes)}</datalist></td>
+        <td><input data-i="${i}" data-f="equipment_name" list="etr-names-${i}" value="${(ln.equipment_name||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:220px">
+            <datalist id="etr-names-${i}">${datalistOptions(fo.names)}</datalist></td>
+        <td><input data-i="${i}" data-f="manufacturer" list="etr-mfrs-${i}" value="${(ln.manufacturer||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:160px">
+            <datalist id="etr-mfrs-${i}">${datalistOptions(fo.manufacturers)}</datalist></td>
         <td><button class="btn-red btn-sm" data-del="${i}" style="padding:2px 8px">×</button></td>`;
       tb.append(tr);
     });
-    // Bind
-    tb.querySelectorAll('select,input').forEach(el=>{
-      const handler=()=>{
-        const i=parseInt(el.dataset.i), f=el.dataset.f;
-        if(f==='quantity') lines[i][f]=parseInt(el.value)||1;
-        else { lines[i][f]=el.value;
-          // Changing a higher-level field clears the lower ones so the
-          // cascade re-derives cleanly.
-          if(f==='equipment_type'){ lines[i].equipment_subtype=''; lines[i].equipment_name=''; lines[i].manufacturer=''; }
-          if(f==='equipment_subtype'){ lines[i].equipment_name=''; lines[i].manufacturer=''; }
-          if(f==='equipment_name'){
-            // Auto-fill manufacturer if unambiguous
-            const match=(opts.items||[]).filter(it=>it.equipment_name===el.value);
-            if(match.length===1) lines[i].manufacturer=match[0].manufacturer||'';
-          }
+
+    // Bind. `change` fires when a datalist suggestion is committed (or
+    // the field blurs); `input` covers free-type filtering. We only
+    // re-render + auto-fill on `change` to avoid a render thrash on every
+    // keystroke — the datalist itself handles live filtering already.
+    tb.querySelectorAll('input[data-f]').forEach(el => {
+      const commit = () => {
+        const i = parseInt(el.dataset.i), f = el.dataset.f;
+        if (f === 'quantity') {
+          lines[i][f] = parseInt(el.value) || 1;
+          return;
+        }
+        lines[i][f] = el.value;
+        // After any equipment-field commit, look at all items matching
+        // every filled field. If exactly one item is left, the user has
+        // implicitly identified the row — fill the unset fields. This is
+        // the bidirectional autofill: pick a name and type/subtype/mfr
+        // fill in; pick a manufacturer and name/type/subtype fill in (if
+        // unambiguous), etc.
+        const fields = ['equipment_type','equipment_subtype','equipment_name','manufacturer'];
+        const match = matchingItems(lines[i]);
+        if (match.length === 1) {
+          fields.forEach(k => {
+            if (!lines[i][k] && match[0][k]) lines[i][k] = match[0][k];
+          });
         }
         renderLines();
       };
-      el.oninput=handler; el.onchange=handler;
+      el.onchange = commit;
+      // Also handle blur for the keyboard-typed case where the user
+      // typed a value that matches a datalist option exactly but didn't
+      // click it (some browsers don't fire `change` then).
+      el.onblur = commit;
     });
-    tb.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+    tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       lines.splice(parseInt(b.dataset.del),1);
-      if(lines.length===0) lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+      if (lines.length === 0) lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
       renderLines();
     });
   }
@@ -4087,7 +4113,10 @@ async function etRequest(c){
 async function etMaintenance(c){
   c.innerHTML='<p>Loading…</p>';
   let equip=[];
-  try { const r=await api('/equipment'); equip=r.equipment||r||[]; } catch{}
+  // /api/equipment returns { items, days_ahead }. The old fallback to
+  // `r` itself produced a truthy non-array (the wrapper object) and the
+  // tab silently rendered empty.
+  try { const r=await api('/equipment'); equip=r.items||r.equipment||(Array.isArray(r)?r:[]); } catch{}
 
   // Threshold settings (for the warning colors)
   let thr={};
@@ -4363,7 +4392,10 @@ async function refreshEquipmentList(content, canManage) {
     // Use the flat (non-grouped) list for the management view — sorting/
     // filtering is more useful when everything is in one table.
     const data = await api('/equipment');
-    const items = data.equipment || data || [];
+    // /api/equipment returns { items, days_ahead }. Older callers expected
+    // { equipment: [...] }; keep both as fallbacks so a future shape change
+    // doesn't silently blank the page like it did before.
+    const items = data.items || data.equipment || (Array.isArray(data) ? data : []);
 
     // Populate type-suggestions datalist for the add form
     if (canManage) {
@@ -4896,7 +4928,10 @@ async function renderScheduler(main) {
   // View toggle — By Project (calendar of project cards w/ crew counts)
   // vs By Worker (grid of workers × dates with project numbers per cell).
   // Active button uses .btn class, inactive uses .btn-outline.
-  const seg = h('div',{style:'display:flex;gap:6px;margin-bottom:14px'});
+  // Email Day to Staff lives next to the toggles — promoted out of the
+  // per-day popup so the scheduler can fire a day's email without
+  // drilling into a project card first.
+  const seg = h('div',{style:'display:flex;gap:6px;margin-bottom:14px;align-items:center;flex-wrap:wrap'});
   const byProjBtn = h('button',{
     className: schedulerState.view === 'by-project' ? 'btn' : 'btn-outline',
     style: 'padding:8px 18px;font-size:13px',
@@ -4908,6 +4943,11 @@ async function renderScheduler(main) {
     onclick: () => { schedulerState.view = 'by-worker'; main.innerHTML=''; renderScheduler(main); },
   }, 'By Worker');
   seg.append(byProjBtn); seg.append(byWorkerBtn);
+  seg.append(h('button',{
+    className:'btn-outline',
+    style:'padding:8px 14px;font-size:13px;margin-left:auto',
+    onclick: () => showEmailDayPickerPopup(),
+  }, '✉ Email Day to Staff'));
   main.append(seg);
 
   if (schedulerState.view === 'by-worker') {
@@ -5205,32 +5245,9 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
   dayNotesSection.append(dayNoteSaveBtn);
   modal.append(dayNotesSection);
 
-  // ─── Email Day to Staff ─────────────────────────────────────
-  const emailRow = h('div',{style:'display:flex;justify-content:flex-end;margin-bottom:10px'});
-  emailRow.append(h('button',{
-    className: 'btn btn-sm',
-    title: dayAssignments.length === 0 ? 'Assign at least one worker first' : '',
-    onclick: async () => {
-      if (dayAssignments.length === 0) return alert('Assign workers to this day first.');
-      // Save the day note before sending so the email includes the
-      // latest text — small UX win, costs nothing
-      try {
-        await api(`/projects/${project.id}/day-notes/${dateKey}`, {
-          method: 'PUT',
-          body: JSON.stringify({ notes: $('#sch-day-note-ta').value }),
-        });
-      } catch {}
-      if (!confirm(`Email/notify ${dayAssignments.length} worker${dayAssignments.length === 1 ? '' : 's'} about ${dateKey}?\n\nIncludes project info, crew list, and the day note above. Project-level notes are NOT included.`)) return;
-      try {
-        const r = await api(`/projects/${project.id}/email-day`, {
-          method: 'POST',
-          body: JSON.stringify({ date: dateKey }),
-        });
-        alert(`Sent to ${r.sent_to} worker${r.sent_to === 1 ? '' : 's'}.`);
-      } catch (err) { alert(err.message); }
-    },
-  }, '✉ Email Day to Staff'));
-  modal.append(emailRow);
+  // Email Day to Staff used to live here; moved up to the Scheduler tab
+  // top-level header so it's reachable without opening a day card. See
+  // showEmailDayPickerPopup.
 
   // Close button — re-renders the calendar so any assignment/fully-staffed
   // changes made inside the modal show up on the cards without a manual
@@ -5539,6 +5556,94 @@ async function renderSchedulerByWorker(main) {
   });
   tbl.append(tbody);
   wrap.append(tbl);
+}
+
+
+// Top-level Email Day to Staff picker — replaces the per-day-popup
+// button. Asks for a date, lists projects scheduled on that date with
+// their assigned crew count, picks one, confirms, fires the email.
+async function showEmailDayPickerPopup() {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:520px;max-height:80vh;display:flex;flex-direction:column'});
+  modal.append(h('h2',{},'Email Day to Staff'));
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:12px'},
+    'Pick a date and a project. Workers assigned that day get the project info, crew list, and day note.'));
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const dateRow = h('div',{className:'form-group',style:'margin-bottom:10px'});
+  dateRow.append(h('label',{},'Date'));
+  const dateInput = h('input',{type:'date',value:todayStr});
+  dateRow.append(dateInput);
+  modal.append(dateRow);
+
+  const listLabel = h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:4px'},'Projects on this date');
+  modal.append(listLabel);
+  const listWrap = h('div',{style:'display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1;min-height:120px;margin-bottom:10px'});
+  modal.append(listWrap);
+
+  const closeRow = h('div',{style:'display:flex;justify-content:flex-end;border-top:1px solid var(--border);padding-top:10px'});
+  closeRow.append(h('button',{className:'btn-outline btn-sm',onclick:()=>overlay.remove()},'Cancel'));
+  modal.append(closeRow);
+  overlay.append(modal); document.body.append(overlay);
+
+  async function loadProjects(forDate) {
+    listWrap.innerHTML='';
+    listWrap.append(h('div',{style:'color:var(--text2);padding:8px;font-size:13px'},'Loading…'));
+    let projects = [];
+    try {
+      const r = await api(`/projects/scheduled-list?from=${forDate}&to=${forDate}`);
+      projects = r.projects || [];
+    } catch (err) {
+      listWrap.innerHTML='';
+      listWrap.append(h('div',{style:'color:var(--red);padding:8px'}, 'Could not load: '+err.message));
+      return;
+    }
+    listWrap.innerHTML='';
+    if (projects.length === 0) {
+      listWrap.append(h('div',{style:'color:var(--text2);padding:8px;font-size:13px'},
+        'No projects scheduled on this date.'));
+      return;
+    }
+    // Per-project crew count for the date — one round-trip per project,
+    // small N (only same-day projects).
+    await Promise.all(projects.map(async p => {
+      try {
+        const a = await api('/projects/' + p.id + '/assignments');
+        const count = (a.assignments || []).filter(x => String(x.work_date).slice(0,10) === forDate).length;
+        p._dayCrew = count;
+      } catch { p._dayCrew = 0; }
+    }));
+    projects.forEach(p => {
+      const hasCrew = p._dayCrew > 0;
+      const row = h('div',{
+        style:`padding:10px;background:var(--bg3);border-radius:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;${hasCrew?'cursor:pointer':'opacity:0.55'}`,
+        title: hasCrew ? '' : 'No workers assigned this day — assign a crew first',
+      });
+      const left = h('div');
+      left.append(h('div',{style:'font-weight:600;font-size:13px'}, p.primary_number || p.name || 'Project'));
+      left.append(h('div',{style:'font-size:11px;color:var(--text2)'}, p.customer_name || '—'));
+      row.append(left);
+      row.append(h('span',{style:'font-size:12px;color:var(--text3);white-space:nowrap'},
+        `${p._dayCrew} worker${p._dayCrew===1?'':'s'}`));
+      if (hasCrew) {
+        row.onclick = async () => {
+          if (!confirm(`Email ${p._dayCrew} worker${p._dayCrew===1?'':'s'} on "${p.primary_number || p.name}" for ${forDate}?`)) return;
+          try {
+            const r = await api(`/projects/${p.id}/email-day`, {
+              method:'POST', body: JSON.stringify({ date: forDate }),
+            });
+            alert(`Sent to ${r.sent_to} worker${r.sent_to===1?'':'s'}.`);
+            overlay.remove();
+          } catch (err) { alert(err.message); }
+        };
+      }
+      listWrap.append(row);
+    });
+  }
+
+  dateInput.onchange = () => loadProjects(dateInput.value);
+  loadProjects(todayStr);
 }
 
 

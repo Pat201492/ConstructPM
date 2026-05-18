@@ -21,6 +21,15 @@ const Project = {
       .groupBy('project_id')
       .as('spn_agg');
 
+    // Primary project number — needed by anywhere the SPA wants to show
+    // a project as "M26-1308.1" instead of the long descriptive name.
+    // Pat's rule: equipment-ticket pickers, scheduler tags, etc. should
+    // always lean on the primary number first.
+    const primarySub = db('project_numbers')
+      .select('project_id', 'number as primary_number')
+      .where('label', 'Primary')
+      .as('primary_pn');
+
     // Aggregated counts/dates per project — single roundtrip via subqueries.
     // These power the "advanced" hidden-by-default columns on the projects
     // list (Last Invoice Date, Open POs, Equipment Out, Margin %).
@@ -64,6 +73,7 @@ const Project = {
         'locations.display_address as location_address',
         'bids.bid_number as won_from_bid_number',
         'spn_agg.spns as spns',
+        'primary_pn.primary_number',
         'last_inv.last_invoice_date',
         'open_pos.open_pos_count',
         'equip_out.equipment_out_count',
@@ -76,6 +86,7 @@ const Project = {
       .leftJoin('users', 'projects.pm_id', 'users.id')
       .leftJoin('bids', 'projects.bid_id', 'bids.id')
       .leftJoin(spnsSub, 'projects.id', 'spn_agg.project_id')
+      .leftJoin(primarySub, 'projects.id', 'primary_pn.project_id')
       .leftJoin(lastInvSub, 'projects.id', 'last_inv.project_id')
       .leftJoin(openPosSub, 'projects.id', 'open_pos.project_id')
       .leftJoin(equipOutSub, 'projects.id', 'equip_out.project_id')
