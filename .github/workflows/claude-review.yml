@@ -1,0 +1,66 @@
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--model claude-opus-4-7 --max-turns 40'
+          prompt: |
+            Perform a deep, thorough code review of this pull request. Take your time. Think hard.
+
+            ## Process
+            1. Read the full PR diff to understand the scope of changes.
+            2. For each modified file, read the surrounding code — not just the diff lines — to understand context.
+            3. Identify other files/modules in the repo that depend on the changed code, and read those too.
+            4. Examine test coverage: are new tests added? do existing tests actually exercise the new behavior? are edge cases covered?
+            5. Consider runtime behavior under load and failure modes, not just static correctness.
+
+            ## Focus areas — be thorough on each
+            - **Bugs & logic errors**: off-by-one, null/undefined handling, race conditions, error paths, untested edge cases
+            - **Security**: SQL injection, XSS, command injection, path traversal, authn/authz gaps, secrets in code, unsafe deserialization, OWASP top 10
+            - **Performance**: N+1 queries, unnecessary loops, memory leaks, blocking calls in async paths, inefficient algorithms, missing indexes
+            - **Data integrity**: migration safety, schema changes, backwards compatibility, default values for new non-null columns, transaction boundaries
+            - **Test coverage**: missing tests for new logic, brittle tests, tests that don't actually exercise the changed path, missing failure-mode tests
+            - **Codebase consistency**: deviations from existing patterns, naming inconsistencies, duplicated logic, dead code
+            - **API contracts**: breaking changes to public interfaces, version compatibility, error response shape
+            - **Concurrency**: locks, transactions, deadlocks, atomicity, idempotency for retried operations
+            - **Observability**: missing logs/metrics on new code paths, log levels, sensitive data leaking into logs
+            - **Error handling**: silently swallowed exceptions, missing rollbacks, partial-failure recovery
+
+            ## Output format
+            Post a single PR comment structured exactly as below. Every issue must cite a file path and line number, and propose a specific concrete fix where possible. Don't invent issues to pad sections — if a section is empty, write "None."
+
+            ## Summary
+            One paragraph: what this PR does and your overall verdict — **ship it** / **needs changes** / **blocker**.
+
+            ## Blockers
+            Issues that should prevent merge. Each: `path/to/file.ext:LINE` — description — suggested fix.
+
+            ## Recommended changes
+            Important but not blocking. Same format.
+
+            ## Nitpicks
+            Small style/clarity issues. Keep this section short. Skip if none.
+
+            ## What you got right
+            One or two specific things done well. Keep brief — this signals you actually read the code.
