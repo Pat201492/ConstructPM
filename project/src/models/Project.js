@@ -160,17 +160,6 @@ const Project = {
         db.raw('COUNT(*) as timesheet_count'),
       );
 
-    // Equipment cost = sum(days checked out × daily rate) for this project
-    const [equipCost] = await db('equipment_checkout_log')
-      .join('equipment', 'equipment_checkout_log.equipment_id', 'equipment.id')
-      .where('equipment_checkout_log.project_id', id)
-      .select(
-        db.raw(`COALESCE(SUM(
-          equipment.equipment_cost * 
-          GREATEST(1, EXTRACT(DAY FROM (COALESCE(equipment_checkout_log.returned_at, NOW()) - equipment_checkout_log.checked_out_at)))
-        ), 0) as total_equipment_cost`),
-      );
-
     // Payment overdue count
     const [overdueStats] = await db('invoices')
       .where({ project_id: id })
@@ -182,7 +171,7 @@ const Project = {
     // Calculate totals
     const totalRevenue = parseFloat(invoiceStats.total_revenue);
     const totalPerDiem = parseFloat(laborStats.total_per_diem);
-    const totalCost = parseFloat(poStats.total_po_cost) + parseFloat(equipCost.total_equipment_cost) + parseFloat(laborStats.total_mileage_cost) + totalPerDiem;
+    const totalCost = parseFloat(poStats.total_po_cost) + parseFloat(laborStats.total_mileage_cost) + totalPerDiem;
     const contractValue = parseFloat(project.contract_value) || 0;
     const marginDollars = totalRevenue - totalCost;
     const marginPercent = totalRevenue > 0 ? (marginDollars / totalRevenue) * 100 : 0;
@@ -200,7 +189,6 @@ const Project = {
       total_revenue: totalRevenue,
       total_cost: totalCost,
       total_po_cost: parseFloat(poStats.total_po_cost),
-      total_equipment_cost: parseFloat(equipCost.total_equipment_cost),
       total_mileage_cost: parseFloat(laborStats.total_mileage_cost),
       total_per_diem: totalPerDiem,
       total_labor_revenue: parseFloat(laborStats.total_labor_revenue),

@@ -373,10 +373,10 @@ const ExportService = {
     if (filters.equipment_type) query.where('equipment.equipment_type', filters.equipment_type);
 
     const items = await query;
-    const headers = ['Barcode', 'Name', 'Manufacturer', 'Type', 'Daily Cost', 'Status', 'Location/Project', 'Cert Date'];
+    const headers = ['Barcode', 'Name', 'Manufacturer', 'Type', 'Status', 'Location/Project', 'Cert Date'];
     const data = items.map(e => [
       e.barcode_id, e.equipment_name, e.manufacturer || '', e.equipment_type || '',
-      this._fmtAmt(e.equipment_cost), e.status,
+      e.status,
       e.current_project_name || e.current_location || 'shop',
       e.certification_date || '',
     ]);
@@ -392,7 +392,7 @@ const ExportService = {
       { name: 'timesheets', label: 'Timesheets', columns: ['worker_name', 'classification', 'work_date', 'st_hours', 'ot_hours', 'dt_hours', 'potential_revenue', 'project_name'] },
       { name: 'projects', label: 'Projects', columns: ['name', 'year', 'status', 'contract_value', 'contract_type', 'payment_terms', 'local_union', 'customer_name', 'pm_name'] },
       { name: 'bids', label: 'Bids', columns: ['bid_number', 'project_scope', 'status', 'bid_amount', 'markup_pct', 'customer_name', 'location_name'] },
-      { name: 'equipment', label: 'Equipment', columns: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_cost', 'status', 'certification_date'] },
+      { name: 'equipment', label: 'Equipment', columns: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'status', 'certification_date'] },
       { name: 'customers', label: 'Customers', columns: ['name', 'billing_street', 'billing_town', 'billing_state', 'billing_zip'] },
       { name: 'locations', label: 'Locations', columns: ['name', 'street', 'town', 'state', 'zip', 'local_union', 'miles_from_hq'] },
     ];

@@ -158,7 +158,6 @@ const SOURCES = {
       { key: 'equipment.manufacturer', label: 'Manufacturer' },
       { key: 'equipment.equipment_type', label: 'Type' },
       { key: 'equipment.status', label: 'Status' },
-      { key: 'equipment.equipment_cost', label: 'Daily Cost' },
       { key: 'equipment.certification_date', label: 'Cert Expiry' },
       { key: 'equipment.cert_expiry_alert_days', label: 'Cert Alert (days)' },
       { key: 'equipment.current_location', label: 'Current Location' },

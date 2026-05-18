@@ -567,21 +567,21 @@ exports.seed = async function (knex) {
   // EQUIPMENT
   // ═══════════════════════════════════════════════════════════
   const equipmentItems = [
-    { barcode_id: 'EQ-001', equipment_name: 'Hilti TE 60-ATC Rotary Hammer', manufacturer: 'Hilti', equipment_type: 'Power Tools', equipment_cost: 15, status: 'available' },
-    { barcode_id: 'EQ-002', equipment_name: 'Milwaukee M18 Band Saw', manufacturer: 'Milwaukee', equipment_type: 'Power Tools', equipment_cost: 10, status: 'available' },
-    { barcode_id: 'EQ-003', equipment_name: 'Greenlee 855GX Conduit Bender', manufacturer: 'Greenlee', equipment_type: 'Bending Equipment', equipment_cost: 50, status: 'checked_out', current_project_id: projects[0].id, current_location: projects[0].name },
-    { barcode_id: 'EQ-004', equipment_name: 'Ideal PowerBlade Cable Cutter', manufacturer: 'Ideal', equipment_type: 'Power Tools', equipment_cost: 8, status: 'available' },
-    { barcode_id: 'EQ-005', equipment_name: 'Fluke 1587 Insulation Tester', manufacturer: 'Fluke', equipment_type: 'Testing', equipment_cost: 20, status: 'available', certification_date: '2026-08-15' },
-    { barcode_id: 'EQ-006', equipment_name: 'Megger MIT485/2 Insulation Tester', manufacturer: 'Megger', equipment_type: 'Testing', equipment_cost: 25, status: 'checked_out', current_project_id: projects[1].id, current_location: projects[1].name, certification_date: '2026-06-01' },
-    { barcode_id: 'EQ-007', equipment_name: 'Fluke Ti450 Thermal Imager', manufacturer: 'Fluke', equipment_type: 'Testing', equipment_cost: 35, status: 'available', certification_date: '2026-12-31' },
-    { barcode_id: 'EQ-008', equipment_name: 'Genie GS-1930 Scissor Lift', manufacturer: 'Genie', equipment_type: 'Lifts', equipment_cost: 150, status: 'checked_out', current_project_id: projects[0].id, current_location: projects[0].name },
-    { barcode_id: 'EQ-009', equipment_name: 'JLG 450AJ Boom Lift', manufacturer: 'JLG', equipment_type: 'Lifts', equipment_cost: 250, status: 'available' },
-    { barcode_id: 'EQ-010', equipment_name: 'Klein CL800 Digital Clamp Meter', manufacturer: 'Klein Tools', equipment_type: 'Testing', equipment_cost: 5, status: 'available' },
-    { barcode_id: 'EQ-011', equipment_name: 'Greenlee 6001 Cable Puller', manufacturer: 'Greenlee', equipment_type: 'Cable Pulling', equipment_cost: 40, status: 'checked_out', current_project_id: projects[1].id, current_location: projects[1].name },
-    { barcode_id: 'EQ-012', equipment_name: 'Ridgid 300 Compact Threader', manufacturer: 'Ridgid', equipment_type: 'Threading', equipment_cost: 30, status: 'maintenance_required' },
-    { barcode_id: 'EQ-013', equipment_name: 'Milwaukee MX FUEL Breaker', manufacturer: 'Milwaukee', equipment_type: 'Demolition', equipment_cost: 20, status: 'available' },
-    { barcode_id: 'EQ-014', equipment_name: 'Amprobe AT-6030 Wire Tracer', manufacturer: 'Amprobe', equipment_type: 'Testing', equipment_cost: 8, status: 'available' },
-    { barcode_id: 'EQ-015', equipment_name: 'Enerpac Hydraulic Knockout Set', manufacturer: 'Enerpac', equipment_type: 'Knockout Tools', equipment_cost: 12, status: 'available' },
+    { barcode_id: 'EQ-001', equipment_name: 'Hilti TE 60-ATC Rotary Hammer', manufacturer: 'Hilti', equipment_type: 'Power Tools', status: 'available' },
+    { barcode_id: 'EQ-002', equipment_name: 'Milwaukee M18 Band Saw', manufacturer: 'Milwaukee', equipment_type: 'Power Tools', status: 'available' },
+    { barcode_id: 'EQ-003', equipment_name: 'Greenlee 855GX Conduit Bender', manufacturer: 'Greenlee', equipment_type: 'Bending Equipment', status: 'checked_out', current_project_id: projects[0].id, current_location: projects[0].name },
+    { barcode_id: 'EQ-004', equipment_name: 'Ideal PowerBlade Cable Cutter', manufacturer: 'Ideal', equipment_type: 'Power Tools', status: 'available' },
+    { barcode_id: 'EQ-005', equipment_name: 'Fluke 1587 Insulation Tester', manufacturer: 'Fluke', equipment_type: 'Testing', status: 'available', certification_date: '2026-08-15' },
+    { barcode_id: 'EQ-006', equipment_name: 'Megger MIT485/2 Insulation Tester', manufacturer: 'Megger', equipment_type: 'Testing', status: 'checked_out', current_project_id: projects[1].id, current_location: projects[1].name, certification_date: '2026-06-01' },
+    { barcode_id: 'EQ-007', equipment_name: 'Fluke Ti450 Thermal Imager', manufacturer: 'Fluke', equipment_type: 'Testing', status: 'available', certification_date: '2026-12-31' },
+    { barcode_id: 'EQ-008', equipment_name: 'Genie GS-1930 Scissor Lift', manufacturer: 'Genie', equipment_type: 'Lifts', status: 'checked_out', current_project_id: projects[0].id, current_location: projects[0].name },
+    { barcode_id: 'EQ-009', equipment_name: 'JLG 450AJ Boom Lift', manufacturer: 'JLG', equipment_type: 'Lifts', status: 'available' },
+    { barcode_id: 'EQ-010', equipment_name: 'Klein CL800 Digital Clamp Meter', manufacturer: 'Klein Tools', equipment_type: 'Testing', status: 'available' },
+    { barcode_id: 'EQ-011', equipment_name: 'Greenlee 6001 Cable Puller', manufacturer: 'Greenlee', equipment_type: 'Cable Pulling', status: 'checked_out', current_project_id: projects[1].id, current_location: projects[1].name },
+    { barcode_id: 'EQ-012', equipment_name: 'Ridgid 300 Compact Threader', manufacturer: 'Ridgid', equipment_type: 'Threading', status: 'maintenance_required' },
+    { barcode_id: 'EQ-013', equipment_name: 'Milwaukee MX FUEL Breaker', manufacturer: 'Milwaukee', equipment_type: 'Demolition', status: 'available' },
+    { barcode_id: 'EQ-014', equipment_name: 'Amprobe AT-6030 Wire Tracer', manufacturer: 'Amprobe', equipment_type: 'Testing', status: 'available' },
+    { barcode_id: 'EQ-015', equipment_name: 'Enerpac Hydraulic Knockout Set', manufacturer: 'Enerpac', equipment_type: 'Knockout Tools', status: 'available' },
   ];
   await knex('equipment').insert(equipmentItems);
   console.log('  ✅ 15 equipment items');
