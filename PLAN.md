@@ -1,172 +1,152 @@
-# Plan — Saved & scheduled exports (with email + manual trigger)
+# Plan — Email templates + daily project briefing
 
-> Branch: `add-export-scheduler`
+> Branch: `email-templates-and-briefings`
 > Approved: Pat, 2026-05-18
 
 ## Why
 
-Pat wants to save an export configuration (source + columns + filters + recipients) so that:
-1. It runs automatically on a cron-like schedule and emails the resulting CSV to selected internal users, **and/or**
-2. It can be manually triggered with one click and emailed to the same recipient list immediately.
+Two related needs:
 
-Concretely: "send me my P&L every Monday at 8am, and let me also fire it on demand mid-week if a client asks."
+1. **Editable email content.** The saved-export scheduler currently hardcodes its email body in `SavedExportRunner.js` — you can't tweak the wording without editing source. Pat wants a real template surface to edit.
+2. **Per-project daily briefing email.** A single email per project sent every morning to: the PM, the scheduler(s), every assigned staff member, plus any extra recipients the PM adds. Per-project enabled toggle + send-hour, so it behaves like a rule the PM configures and forgets.
 
-## Status of email
-
-Per [[email-provider-status]]: the email pipeline is wired but `EMAIL_PROVIDER` / `SENDGRID_API_KEY` aren't set in the local `.env`, so dev sends fall through to a no-op (logged, not delivered). This PR builds the plumbing; the day Pat sets `EMAIL_PROVIDER=sendgrid` + `SENDGRID_API_KEY=…` + `EMAIL_FROM=quotes@<domain>`, every saved+scheduled export starts actually delivering with zero further code change.
+(2) is naturally the second consumer of (1)'s template system — building both together keeps the abstraction honest from day one.
 
 ## What changes
 
+### Part A — Email templates (foundation)
+
 | File | Change |
 |---|---|
-| `package.json` | Add `cron-parser` (~50KB) for parsing cron strings + computing `next_run_at`. |
-| `migrations/20260518_009_saved_exports.js` (new) | New `saved_exports` table — see schema below. |
-| `src/services/SavedExportRunner.js` (new) | Given a `saved_exports` row: runs `ExportBuilder.execute()`, writes CSV to a temp file, calls `NotificationService.sendEmailWithAttachment` per recipient, updates `last_run_at` / `last_status` / `last_error`. Returns `{ delivered, failed, rowCount }`. |
-| `src/services/FileWatcher.js` | Extend `_poll()` with a new `_processDueSavedExports()` method that selects `saved_exports WHERE enabled = true AND cron IS NOT NULL AND next_run_at <= NOW()`, runs each via `SavedExportRunner`, then recomputes `next_run_at` from the cron string. |
-| `src/routes/savedExports.js` (new) | CRUD + manual trigger — `GET/POST /api/exports/schedules`, `PATCH/DELETE /:id`, `POST /:id/trigger`. Authorize via `exports:read` for read paths and `exports:manage` for write/trigger. |
-| `src/app.js` (or wherever routes are mounted) | Mount the new router. |
-| `migrations/20260518_010_exports_manage_permission.js` (new) | Add `exports:manage` to admin's permissions array on `role_configurations` (also project_manager + accounting if they're allowed to save their own exports — decision below). |
-| `src/routes/users.js` | Add `GET /api/users/email-picker` — narrow endpoint returning `{id, first_name, last_name, email}` for any active user. Used by the recipient picker. Authorized by `exports:manage`. |
-| `public/index.html` — `renderExports()` | Add a "Saved & Scheduled" section above the picker: list of saved configs with toggle/edit/run-now/delete; a "Save current config" button under the existing column-picker that opens a modal for name + cron + recipients. |
-| `docs/EXPORT_METADATA.md` (touched) | Add a short "Scheduling" section pointing at the new flow. |
+| `migrations/20260518_011_email_templates.js` (new) | `email_templates` table + seed two rows: `saved_export_email` (the export scheduler's body, polished) and `project_daily_briefing` (the per-project email body). |
+| `src/services/EmailTemplateService.js` (new) | `get(key)`, `render(key, vars)`. `{{var}}` does HTML-escape; `{{{var}}}` is raw (for pre-rendered blocks). Per-key cache, invalidated on PATCH. |
+| `src/routes/emailTemplates.js` (new) | `GET /api/admin/email-templates`, `GET/:key`, `PATCH/:key`, `POST/:key/preview` (renders with sample vars from the template's own `variables` jsonb). Admin only. |
+| `src/services/SavedExportRunner.js` | Drop the inline `emailBody()` helper, call `EmailTemplateService.render('saved_export_email', vars)` instead. |
+| `src/app.js` | Mount the new admin sub-route. |
+| `public/index.html` | New section under Admin → "Email Templates": list of templates → pick one → edit subject + body in two textareas, "Available variables" reference panel, live preview with sample data, Save. |
 
-## Schema (`saved_exports`)
+### Part B — Daily project briefing (consumer)
+
+| File | Change |
+|---|---|
+| `migrations/20260518_012_project_daily_email_configs.js` (new) | `project_daily_email_configs` table — per-project: `{project_id (unique FK), enabled, send_hour_utc (0–23), include_pm, include_scheduler, include_staff, extra_recipient_user_ids jsonb, template_key (default 'project_daily_briefing'), last_run_at, last_status, last_error}`. |
+| `src/services/ProjectBriefingRunner.js` (new) | `run(projectId)`: resolves recipients (PM + scheduler users + staff via `project_assignments` + extras → dedupe → active + has email), builds template vars from project state, calls `EmailTemplateService.render(...)`, sends via `NotificationService.sendEmailWithAttachment` (no attachment — plain HTML). Stamps `last_*`. |
+| `src/routes/projectDailyEmail.js` (new) | `GET /api/projects/:id/daily-email` returns config (or defaults if no row), `PUT /api/projects/:id/daily-email` upserts, `POST /api/projects/:id/daily-email/trigger` runs immediately. Owner/PM/admin gate. |
+| `src/services/FileWatcher.js` | New `_processDueProjectBriefings()` in the existing hourly tick. Selects configs where `enabled=true AND send_hour_utc = <current UTC hour>` and where `last_run_at IS NULL OR last_run_at::date < today_utc::date` — i.e. hasn't already run today. |
+| `src/app.js` | Mount the new project sub-route. |
+| `public/index.html` | New "Daily Email" panel on the project detail page: enabled toggle, send-hour picker (0–23 UTC), three include checkboxes (PM/Scheduler/Staff), extras multi-select (reuses `/api/users/email-picker`), "Send now" preview-and-send button. |
+
+## Schema
+
+### `email_templates`
+
+```js
+t.string('key', 64).primary();        // e.g. 'saved_export_email'
+t.string('name', 255).notNullable();  // display name in the editor
+t.string('subject', 500).notNullable();
+t.text('body_html').notNullable();
+t.text('body_text');                  // optional plain-text fallback
+t.jsonb('variables').notNullable().defaultTo('[]'); // [{key, label, sample}] — drives the help panel + preview
+t.uuid('updated_by').references('id').inTable('users').onDelete('SET NULL');
+t.timestamps(true, true);
+```
+
+### `project_daily_email_configs`
 
 ```js
 t.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
-t.string('name', 255).notNullable();              // user-facing label
-t.uuid('owner_user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
-t.string('source', 64).notNullable();             // ExportBuilder source key
-t.jsonb('columns').notNullable();                 // ordered column-key array (drag-reorder respected)
-t.jsonb('filters');                               // { start_date, end_date, status }
-t.string('cron', 128);                            // nullable — null = manual-only
-t.jsonb('recipients').notNullable().defaultTo('[]'); // array of user IDs
-t.boolean('enabled').notNullable().defaultTo(true);
+t.uuid('project_id').notNullable().unique().references('id').inTable('projects').onDelete('CASCADE');
+t.boolean('enabled').notNullable().defaultTo(false);
+t.integer('send_hour_utc').notNullable().defaultTo(13); // 8am ET ~= 13 UTC
+t.boolean('include_pm').notNullable().defaultTo(true);
+t.boolean('include_scheduler').notNullable().defaultTo(true);
+t.boolean('include_staff').notNullable().defaultTo(true);
+t.jsonb('extra_recipient_user_ids').notNullable().defaultTo('[]');
+t.string('template_key', 64).notNullable().defaultTo('project_daily_briefing');
 t.timestamp('last_run_at');
-t.string('last_status', 32);                      // 'ok' | 'partial' | 'failed' | 'no_rows'
+t.string('last_status', 32);
 t.text('last_error');
-t.timestamp('next_run_at');                       // recomputed from cron after every run
 t.timestamps(true, true);
-t.index('owner_user_id');
-t.index('next_run_at');
-t.index(['enabled', 'next_run_at']);
+t.index('project_id');
+t.index(['enabled', 'send_hour_utc']);
 ```
+
+## Recipient resolution (for daily briefing)
+
+```
+recipients = []
+if include_pm and projects.pm_id:           recipients += [pm_id]
+if include_scheduler:                       recipients += active users WHERE role='scheduler'
+if include_staff:                           recipients += project_assignments WHERE project_id=X
+recipients += extra_recipient_user_ids
+recipients = dedupe(recipients)
+recipients = filter(active AND email IS NOT NULL)
+```
+
+"The scheduler" defaults to org-level (any user with `role='scheduler'`). If you later want per-project scheduler designation, that's a `role_on_project='scheduler'` row in `project_assignments` — picked up automatically by `include_staff`.
+
+## Template variables (initial)
+
+### `saved_export_email`
+
+| Var | Meaning |
+|---|---|
+| `{{name}}` | Saved export name |
+| `{{source}}` | Source key (projects / bids / etc.) |
+| `{{rowCount}}` | Number of rows in the attached CSV |
+| `{{whenUtc}}` | Run timestamp, UTC, ISO without ms |
+
+### `project_daily_briefing`
+
+| Var | Meaning |
+|---|---|
+| `{{project_name}}` | `projects.name` |
+| `{{project_status}}` | `projects.status` |
+| `{{pm_name}}` | "First Last" of the PM |
+| `{{today_date}}` | Local date (YYYY-MM-DD UTC) |
+| `{{equipment_on_project_count}}` | Count of `equipment.current_project_id = X` |
+| `{{open_pos_count}}` | Count of `purchase_orders` where status not in (received, cancelled) |
+| `{{recent_timesheet_count}}` | Timesheets entered in the last 24h |
+| `{{project_url}}` | Deep link to the project page |
+
+Pat edits the seeded body once via the template editor to taste; the editor is the source of truth from then on.
 
 ## Permission model
 
-- Read & trigger own saved exports: `exports:read` (already granted to admin, PM, accounting)
-- Create/edit/delete: new `exports:manage`. Granted to **admin** by default. **PM** also gets it (so estimators/PMs can wire up their own recurring exports without bothering an admin). Accounting kept on read-only (per the existing pattern of "accounting reads, doesn't author").
-- Listing scope: by default, a user only sees saved exports they `owner_user_id` — admins see all (consistent with the rest of the app).
-
-## SavedExportRunner shape
-
-```js
-async run(savedExportRow) {
-  const { headers, rows } = await ExportBuilder.execute(row.source, row.columns, row.filters);
-  if (rows.length === 0) {
-    await markRun(row.id, 'no_rows', null);
-    return { delivered: 0, failed: 0, rowCount: 0, skipped: 'no_rows' };
-  }
-  const csv = ExportService.toCSV(headers, rows);
-  const tmpPath = await writeTempCsv(csv);
-  try {
-    const recipients = await fetchActiveEmails(row.recipients);
-    let delivered = 0, failed = 0;
-    for (const r of recipients) {
-      const result = await NotificationService.sendEmailWithAttachment({
-        to: r.email,
-        subject: `[ConstructPM] ${row.name}`,
-        html: emailBody(row, rows.length),
-        filePath: tmpPath,
-        filename: `${slug(row.name)}_${ymd()}.csv`,
-        contentType: 'text/csv',
-      });
-      if (result.delivered) delivered++; else failed++;
-    }
-    await markRun(row.id, failed === 0 ? 'ok' : 'partial', failed > 0 ? `${failed} failed deliveries` : null);
-    return { delivered, failed, rowCount: rows.length };
-  } finally {
-    fs.promises.unlink(tmpPath).catch(() => {});
-  }
-}
-```
-
-## Scheduler tick (FileWatcher extension)
-
-```js
-async _processDueSavedExports() {
-  const due = await db('saved_exports')
-    .where('enabled', true)
-    .whereNotNull('cron')
-    .where(function () { this.whereNull('next_run_at').orWhere('next_run_at', '<=', new Date()); });
-  for (const row of due) {
-    try {
-      await SavedExportRunner.run(row);
-    } catch (err) {
-      await db('saved_exports').where('id', row.id).update({
-        last_run_at: new Date(), last_status: 'failed', last_error: err.message,
-      });
-    }
-    // Recompute next_run_at from cron
-    const next = parseExpression(row.cron).next().toDate();
-    await db('saved_exports').where('id', row.id).update({ next_run_at: next });
-  }
-}
-```
-
-Hooked into the existing `_poll()` alongside `_checkBidInactivity` / `_checkOverduePayments` / etc. — same hourly cadence, same `Promise.all` batch. **Precision is therefore hour-level** (within the FileWatcher tick). Acceptable for "Monday 8am" style schedules; finer scheduling is Pass 2.
-
-## UI changes
-
-A new section above the existing Source picker on the Data Export tab:
-
-```
-┌─ Saved & Scheduled Exports ────────────────────────────────┐
-│ Name              Source     Schedule         Recipients   │
-│ Weekly P&L        invoices   Mon 08:00        2  [▶ Run] [✎] [⏸] [×] │
-│ Monthly Equipment equipment  1st of month     1  [▶ Run] [✎] [⏸] [×] │
-│ + Save current config                                       │
-└────────────────────────────────────────────────────────────┘
-```
-
-- Status column shows `last_status` + `last_run_at` ("ok · 2h ago")
-- Run icon (▶) does `POST /:id/trigger`, shows toast with rowCount + delivered/failed
-- Edit (✎) opens a modal with name + cron (with friendly preset chips: "Daily 8am", "Weekly Monday 8am", "Monthly 1st 8am") + recipient multi-select
-- Pause (⏸) toggles `enabled`
-- Delete (×) confirms then DELETEs
-- "Save current config" only enabled when the user has picked a source + at least one column in the existing builder below; clicking opens the same modal pre-filled
-
-Recipient picker: multi-select of active users from `/api/users/email-picker`. Owner is auto-included unless they uncheck themselves.
+- Templates editor: **admin only** (`authorize('admin:*')` or similar wildcard — templates affect every email send).
+- Daily email config: **PM-or-admin** for read/write/trigger. PMs configure their own projects' briefings; admins can touch any.
 
 ## What does NOT change
 
-- ExportBuilder, exportMetadata, the column picker, drag-to-reorder
-- QuickBooks / Procore / payroll hardcoded exports
-- NotificationService (already supports attachments via `sendEmailWithAttachment`)
-- FileWatcher's cadence / global-variable config
+- `NotificationService` (already supports HTML emails + attachments; the templates feed its existing surface)
+- The export-scheduler routes and table from PR #4
+- The existing in-app/push notification body strings (out of scope; future work to convert those to templates if desired)
 
 ## Risks considered
 
-1. **Email is parked** — dev runs will write the temp CSV and return `{delivered:false, provider:'none', reason:'no provider configured'}`. The runner records `last_status='partial'` and `last_error='N failed deliveries'` — that's visible in the UI as a yellow status so Pat knows it ran but didn't deliver. The day email is unparked, status flips to `ok`.
-2. **Cron timezone** — `cron-parser` defaults to UTC. PMs work in the user's local timezone. v1 stores `cron` plus interprets it in **server timezone** (the api container has no TZ set, so UTC). Friendly preset chips in the UI compute the right UTC cron for the user's intent (e.g. "Mon 8am ET" → "0 13 * * 1"). Custom cron entry shows a "next run in <server TZ>" preview. Pass 2: per-saved-export timezone column.
-3. **Long-running exports inside FileWatcher tick** — `Promise.all` runs concurrently with the bid/payment/equipment checks; an export with 10k rows might take a few seconds. Acceptable; CSV is small enough. If we later have huge exports, push to a Bull queue.
-4. **Recipient leaving the org** — if a user in `recipients` is deactivated, `fetchActiveEmails` skips them. `last_error` notes how many were skipped.
-5. **Column key validity drift** — if a column key in a saved config later becomes invalid (e.g. a column was removed from metadata), the export fails with the existing "Invalid column(s)" error; the runner catches it and records `last_status='failed'`.
+1. **Email is parked** — same as PR #4. `last_status='failed'` shows up until `EMAIL_PROVIDER`/`SENDGRID_API_KEY` are set; the briefing still ran end-to-end.
+2. **Template renderer XSS** — `{{var}}` always HTML-escapes; the explicit `{{{var}}}` triple-mustache is only used internally for pre-rendered blocks the runner builds. Template authors (admins) have no way to inject script via the editor unless they paste it into `body_html` directly — and they own the template, so that's intentional.
+3. **"Already ran today" check** — uses `last_run_at::date < today_utc::date`. A briefing scheduled for 23:00 UTC that fails and is then rescheduled past midnight would re-fire the next day. Acceptable.
+4. **`send_hour_utc` is a single integer** — no minute precision, no per-day scheduling. Daily is the only cadence; finer cadence is the saved-export scheduler's job (cron-based). Keep them clearly separated.
+5. **Cache invalidation on template PATCH** — the service clears its own cache on PATCH; if you ever run multi-process, each process caches independently and won't see edits until its next TTL. Mitigation: keep TTL short (30s) or skip caching for v1. Going with **no cache** for v1 (single-row lookup, cheap).
 
 ## Out of scope (Pass 2)
 
-- Per-saved-export timezone
-- Sub-hour precision (move to true cron daemon or Bull `repeatable` jobs)
-- Templated email bodies / attachments other than CSV
-- Distribution via Slack / other channels
-- Run history table (we only track `last_run_at` / `last_status` / `last_error`; a `saved_export_runs` audit log is a separate PR)
+- Per-project scheduler designation (vs org-level scheduler role)
+- Per-day-of-week toggles on briefings (e.g. "weekdays only")
+- Markdown editor for the template body (currently raw HTML textarea)
+- A `briefing_runs` audit table (currently only `last_*` columns)
+- Converting in-app/push notification strings to templates
 
 ## Verification
 
-1. Migration runs cleanly: `docker compose up -d --build` → table present, indexes present
-2. `POST /api/exports/schedules` with `{name, source, columns, filters, cron, recipients, enabled}` returns the row with `next_run_at` populated
-3. `POST /api/exports/schedules/:id/trigger` runs the export, returns `{delivered, failed, rowCount}`. With email parked: `delivered=0, failed=N`, `last_status='partial'`, a temp CSV was written and deleted, `last_run_at` updated
-4. Edit the row's `cron` to `* * * * *` (every minute), enable, wait one FileWatcher tick — confirm `last_run_at` advances and `next_run_at` rolls forward
-5. `GET /api/exports/schedules` returns the user's saved configs; admin sees all
-6. UI: Saved & Scheduled section renders, "Save current config" pre-fills, Run-now shows toast with the right counts, Pause toggles enabled, Delete confirms then removes the row
-7. `GET /api/exports/schedules` with a deactivated user in `recipients` still runs but skips them and notes the skip in `last_error`
+1. Migrations apply cleanly; both templates seeded
+2. `GET /api/admin/email-templates` returns both
+3. `PATCH /api/admin/email-templates/saved_export_email` with new subject/body → saved
+4. `POST /:key/preview` renders with sample vars, no errors
+5. Trigger a saved export → email body matches the (edited) `saved_export_email` template
+6. `PUT /api/projects/:id/daily-email` with `{enabled:true, send_hour_utc:13, include_pm:true, ...}` → upserts
+7. `POST /api/projects/:id/daily-email/trigger` → runs, returns `{delivered, failed, skipped, rowCount: <n recipients>}`. Email parked → `failed` but the run completes and `last_run_at` stamps
+8. Resolver dedupes correctly: if PM is also on `project_assignments`, they appear once
+9. UI: Admin → Email Templates renders both, edit + preview + save works
+10. UI: Project detail → Daily Email panel renders config, toggling + saving persists, Send-now shows toast with delivery counts

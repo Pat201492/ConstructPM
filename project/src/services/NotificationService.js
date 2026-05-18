@@ -329,6 +329,68 @@ const NotificationService = {
   },
 
   /**
+   * Send a one-shot HTML email to a single address — no attachment, no
+   * notifications-table row. Sibling of sendEmailWithAttachment for
+   * surfaces (project daily briefings, future template-driven notices)
+   * that just need a plain HTML/text email out the door.
+   *
+   * @param {Object} opts
+   * @param {string} opts.to        Recipient email
+   * @param {string} opts.subject
+   * @param {string} opts.html      HTML body
+   * @param {string} [opts.text]    Optional plain-text fallback
+   * @returns {Promise<{delivered: boolean, provider: string, reason?: string}>}
+   */
+  async sendEmail({ to, subject, html, text }) {
+    if (!to) return { delivered: false, provider: 'none', reason: 'no recipient' };
+    const provider = process.env.EMAIL_PROVIDER;
+
+    if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
+      const content = [{ type: 'text/html', value: html || '' }];
+      if (text) content.unshift({ type: 'text/plain', value: text });
+      const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to }] }],
+          from: { email: process.env.EMAIL_FROM || 'noreply@constructpm.com' },
+          subject,
+          content,
+        }),
+      });
+      if (!response.ok) {
+        const t = await response.text().catch(() => '');
+        return { delivered: false, provider: 'sendgrid', reason: `${response.status} ${t.slice(0,120)}` };
+      }
+      return { delivered: true, provider: 'sendgrid' };
+    }
+
+    if (provider === 'ses' && process.env.SES_REGION) {
+      const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+      const client = new SESClient({ region: process.env.SES_REGION });
+      const body = { Html: { Data: html || '' } };
+      if (text) body.Text = { Data: text };
+      try {
+        await client.send(new SendEmailCommand({
+          Source: process.env.EMAIL_FROM || 'noreply@constructpm.com',
+          Destination: { ToAddresses: [to] },
+          Message: { Subject: { Data: subject }, Body: body },
+        }));
+        return { delivered: true, provider: 'ses' };
+      } catch (err) {
+        return { delivered: false, provider: 'ses', reason: err.message };
+      }
+    }
+
+    // Dev mode — log and report back.
+    console.log(`[NotificationService] EMAIL (dev): To: ${to} | Subject: ${subject}`);
+    return { delivered: false, provider: 'none', reason: 'no EMAIL_PROVIDER configured' };
+  },
+
+  /**
    * Deliver push notification via Firebase Cloud Messaging
    */
   async _deliverPush(userId, notification) {

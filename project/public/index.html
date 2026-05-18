@@ -2567,6 +2567,118 @@ async function renderProjects(main) {
   }
 }
 
+// PM-or-admin only: per-project daily-briefing email config.
+async function renderProjectDailyEmailPanel(main, project) {
+  const isAdmin = S.user && S.user.role === 'admin';
+  const isPM = project.pm_id && S.user && project.pm_id === S.user.id;
+  if (!isAdmin && !isPM) return;
+
+  const section = h('div',{style:'margin-top:24px;padding:16px;background:var(--bg3);border-radius:8px'});
+  section.append(h('h3',{style:'margin:0 0 4px'},'Daily Email'));
+  section.append(h('p',{style:'color:var(--text3);font-size:12px;margin-bottom:12px'},
+    "Email this project's briefing once a day. By default goes to the PM, every active scheduler, every staff member on the project, plus anyone added below."));
+
+  let cfg = null;
+  try {
+    const r = await api('/projects/' + project.id + '/daily-email');
+    cfg = r.config;
+  } catch (e) {
+    section.append(h('div',{style:'color:var(--red)'},'Failed to load config: ' + e.message));
+    main.append(section);
+    return;
+  }
+
+  const grid = h('div',{className:'form-grid'});
+  const enabledCb = h('input',{type:'checkbox',style:'width:auto'});
+  enabledCb.checked = !!cfg.enabled;
+  grid.append(h('div',{className:'form-group',style:'grid-column:span 2'}, [
+    h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'}, [
+      enabledCb, document.createTextNode('Enabled (fires every day at the time below)'),
+    ]),
+  ]));
+
+  const hourSel = h('select',{});
+  for (let i = 0; i < 24; i++) hourSel.append(h('option',{value:String(i)}, String(i).padStart(2,'0') + ':00 UTC'));
+  hourSel.value = String(cfg.send_hour_utc);
+  grid.append(h('div',{className:'form-group'}, [h('label',{},'Send hour (UTC)'), hourSel]));
+
+  const incPm = h('input',{type:'checkbox',style:'width:auto'}); incPm.checked = !!cfg.include_pm;
+  const incSched = h('input',{type:'checkbox',style:'width:auto'}); incSched.checked = !!cfg.include_scheduler;
+  const incStaff = h('input',{type:'checkbox',style:'width:auto'}); incStaff.checked = !!cfg.include_staff;
+  grid.append(h('div',{className:'form-group'}, [
+    h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'}, [incPm, document.createTextNode('Include PM')]),
+  ]));
+  grid.append(h('div',{className:'form-group'}, [
+    h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'}, [incSched, document.createTextNode('Include scheduler(s)')]),
+  ]));
+  grid.append(h('div',{className:'form-group'}, [
+    h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'}, [incStaff, document.createTextNode('Include staff assigned to project')]),
+  ]));
+  section.append(grid);
+
+  section.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:10px;margin-bottom:4px'},'Additional recipients'));
+  const extrasContainer = h('div',{style:'max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
+  section.append(extrasContainer);
+  const selectedExtras = new Set(cfg.extra_recipient_user_ids || []);
+  (async () => {
+    try {
+      const r = await api('/users/email-picker');
+      const users = r.users || [];
+      if (users.length === 0) {
+        extrasContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
+        return;
+      }
+      users.forEach(u => {
+        const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
+        const cb = h('input',{type:'checkbox',style:'width:auto'});
+        cb.checked = selectedExtras.has(u.id);
+        cb.onchange = () => { if (cb.checked) selectedExtras.add(u.id); else selectedExtras.delete(u.id); };
+        row.append(cb);
+        row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
+        extrasContainer.append(row);
+      });
+    } catch (e) {
+      extrasContainer.append(h('p',{style:'color:var(--red);font-size:12px;margin:4px'},'Failed to load: ' + e.message));
+    }
+  })();
+
+  if (cfg.last_run_at) {
+    section.append(h('p',{style:'font-size:11px;color:var(--text3);margin-top:10px'},
+      'Last run: ' + cfg.last_run_at + ' · status: ' + cfg.last_status + (cfg.last_error ? ' · ' + cfg.last_error : '')));
+  }
+
+  function gatherPayload() {
+    return {
+      enabled: enabledCb.checked,
+      send_hour_utc: parseInt(hourSel.value, 10),
+      include_pm: incPm.checked,
+      include_scheduler: incSched.checked,
+      include_staff: incStaff.checked,
+      extra_recipient_user_ids: [...selectedExtras],
+    };
+  }
+
+  const actions = h('div',{style:'display:flex;gap:8px;margin-top:12px'});
+  actions.append(h('button',{className:'btn',onclick:async()=>{
+    try {
+      await api('/projects/' + project.id + '/daily-email', { method: 'PUT', body: JSON.stringify(gatherPayload()) });
+      alert('Saved.');
+    } catch (e) { alert(e.message); }
+  }},'Save'));
+  actions.append(h('button',{className:'btn-outline',onclick:async()=>{
+    try {
+      // Save first so the trigger uses the current form state
+      await api('/projects/' + project.id + '/daily-email', { method: 'PUT', body: JSON.stringify(gatherPayload()) });
+      const r = await api('/projects/' + project.id + '/daily-email/trigger', { method: 'POST' });
+      const skipped = r.skipped ? ', skipped ' + r.skipped : '';
+      alert('Sent — ' + r.recipientsResolved + ' recipient(s) · delivered ' + r.delivered + ', failed ' + r.failed + skipped + ' (' + r.status + ')');
+    } catch (e) { alert(e.message); }
+  }},'Send now'));
+  section.append(actions);
+
+  main.append(section);
+}
+
 async function renderProjectDetail(main) {
   const data=await api('/projects/'+S.params.id);
   const p=data.project, f=data.financials||{};
@@ -2685,6 +2797,9 @@ async function renderProjectDetail(main) {
     notesSection.append(saveBtn);
     main.append(notesSection);
   }
+
+  // PM/admin-only per-project daily briefing config
+  await renderProjectDailyEmailPanel(main, p);
 
   // Action buttons — each gated on the feature flag for the action it
   // performs. With all three flags off, only the Close Project button
@@ -7932,7 +8047,7 @@ async function superadminFeatureToggles(c) {
 async function renderAdmin(main) {
   main.append(h('div',{className:'page-header'},[h('h1',{},'Admin')]));
 
-  const tabs=['Users','Roles','Locations','Vendors','Rate Sheet','Global Variables','Templates','Form Templates','Inbox Access','Delegates','Bulk Import','Audit Log'];
+  const tabs=['Users','Roles','Locations','Vendors','Rate Sheet','Global Variables','Templates','Form Templates','Inbox Access','Delegates','Bulk Import','Email Templates','Audit Log'];
   const tabBar=h('div',{style:'display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap'});
   const tabContent=h('div',{id:'admin-content'});
 
@@ -7953,6 +8068,7 @@ async function renderAdmin(main) {
         case 'Inbox Access': await adminInboxAccess(tabContent); break;
         case 'Delegates': await adminDelegates(tabContent); break;
         case 'Bulk Import': await adminBulkImport(tabContent); break;
+        case 'Email Templates': await adminEmailTemplates(tabContent); break;
         case 'Audit Log': await adminAudit(tabContent); break;
       }
     }},t));
@@ -9000,6 +9116,128 @@ function showImportMapping(c,targets,target,parsed) {
       mapping.innerHTML='';
     } catch(e) { alert(e.message); }
   }},'Import '+parsed.total_rows+' Rows'));
+}
+
+async function adminEmailTemplates(c) {
+  c.innerHTML = '';
+  c.append(h('p',{style:'color:var(--text2);margin-bottom:12px'},
+    'Editable copy for system-sent emails. Use {{variable}} for HTML-escaped substitution, {{{variable}}} to insert pre-rendered HTML.'));
+
+  let templates = [];
+  try {
+    const r = await api('/admin/email-templates');
+    templates = r.templates || [];
+  } catch (e) {
+    c.append(h('div',{style:'color:var(--red)'}, 'Failed to load templates: ' + e.message));
+    return;
+  }
+  if (templates.length === 0) {
+    c.append(h('p',{style:'color:var(--text3)'},'No templates defined.'));
+    return;
+  }
+
+  let activeKey = templates[0].key;
+
+  const layout = h('div',{style:'display:grid;grid-template-columns:240px 1fr;gap:16px'});
+  const left = h('div',{});
+  const right = h('div',{id:'et-editor'});
+  layout.append(left); layout.append(right);
+  c.append(layout);
+
+  function renderList() {
+    left.innerHTML = '';
+    templates.forEach(t => {
+      const isActive = t.key === activeKey;
+      const item = h('div',{
+        style: 'padding:8px 10px;margin-bottom:4px;border-radius:4px;cursor:pointer;font-size:13px;'
+          + (isActive ? 'background:var(--primary);color:#fff' : 'background:var(--bg3)'),
+        onclick: () => { activeKey = t.key; renderList(); renderEditor(); },
+      });
+      item.append(h('div',{style:'font-weight:600'}, t.name));
+      item.append(h('div',{style:'font-size:11px;opacity:0.75'}, t.key));
+      left.append(item);
+    });
+  }
+
+  function renderEditor() {
+    const tpl = templates.find(t => t.key === activeKey);
+    if (!tpl) return;
+    right.innerHTML = '';
+    right.append(h('h3',{style:'margin:0 0 10px'}, tpl.name));
+
+    right.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:4px'},'Template name'));
+    const nameInp = h('input',{type:'text',value:tpl.name,style:'width:100%;margin-bottom:6px'});
+    right.append(nameInp);
+
+    right.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:8px'},'Subject'));
+    const subjectInp = h('input',{type:'text',value:tpl.subject,style:'width:100%;margin-bottom:6px;font-family:JetBrains Mono,monospace;font-size:12px'});
+    right.append(subjectInp);
+
+    right.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:8px'},'Body (HTML)'));
+    const bodyTA = h('textarea',{style:'width:100%;min-height:300px;font-family:JetBrains Mono,monospace;font-size:12px;padding:8px;resize:vertical'});
+    bodyTA.value = tpl.body_html || '';
+    right.append(bodyTA);
+
+    if (tpl.variables && tpl.variables.length > 0) {
+      const varsPanel = h('div',{style:'margin-top:10px;padding:8px 10px;background:var(--bg3);border-radius:4px;font-size:11px'});
+      varsPanel.append(h('div',{style:'font-weight:700;margin-bottom:4px'},'Available variables'));
+      tpl.variables.forEach(v => {
+        const row = h('div',{style:'display:flex;gap:8px;align-items:baseline;padding:2px 0'});
+        row.append(h('code',{style:'background:var(--bg);padding:1px 6px;border-radius:2px;color:var(--primary);min-width:200px'}, '{{' + v.key + '}}'));
+        row.append(h('span',{style:'color:var(--text2)'}, v.label || ''));
+        if (v.sample !== undefined && v.sample !== null) {
+          row.append(h('span',{style:'color:var(--text3);margin-left:auto;font-family:monospace'}, '"' + String(v.sample).substring(0,40) + '"'));
+        }
+        varsPanel.append(row);
+      });
+      right.append(varsPanel);
+    }
+
+    const actions = h('div',{style:'display:flex;gap:8px;margin-top:12px'});
+    actions.append(h('button',{className:'btn',onclick:async()=>{
+      try {
+        const r = await api('/admin/email-templates/'+tpl.key,{method:'PATCH',body:JSON.stringify({
+          name: nameInp.value,
+          subject: subjectInp.value,
+          body_html: bodyTA.value,
+        })});
+        const ix = templates.findIndex(t => t.key === tpl.key);
+        if (ix >= 0) templates[ix] = r.template;
+        renderList(); renderEditor();
+        alert('Saved.');
+      } catch (e) { alert(e.message); }
+    }},'Save'));
+    actions.append(h('button',{className:'btn-outline',onclick:async()=>{
+      try {
+        const preview = await api('/admin/email-templates/'+tpl.key+'/preview',{method:'POST',body:JSON.stringify({})});
+        showEmailPreviewModal(preview, tpl);
+      } catch (e) { alert(e.message); }
+    }},'Preview'));
+    right.append(actions);
+  }
+
+  renderList();
+  renderEditor();
+}
+
+function showEmailPreviewModal(preview, tpl) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:720px'});
+  modal.append(h('h2',{},'Preview — '+tpl.name));
+  modal.append(h('div',{style:'padding:8px 10px;background:var(--bg3);font-family:monospace;font-size:12px;margin-bottom:10px;border-radius:4px'},
+    'Subject: ' + preview.subject));
+  const body = h('div',{style:'border:1px solid var(--border);padding:12px;max-height:400px;overflow-y:auto;background:#ffffff;color:#222;border-radius:4px'});
+  body.innerHTML = preview.html; // admin-authored content; intentional
+  modal.append(body);
+  if (preview.unresolved && preview.unresolved.length > 0) {
+    modal.append(h('p',{style:'color:var(--yellow);font-size:11px;margin-top:8px'},
+      'Unresolved variables (rendered empty): ' + preview.unresolved.join(', ')));
+  }
+  const close = h('div',{style:'margin-top:12px;text-align:right'});
+  close.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Close'));
+  modal.append(close);
+  overlay.append(modal);
+  document.body.append(overlay);
 }
 
 async function adminAudit(c) {

@@ -18,6 +18,7 @@ const db = require('../config/database');
 const GlobalVariable = require('../models/GlobalVariable');
 const NotificationService = require('./NotificationService');
 const SavedExportRunner = require('./SavedExportRunner');
+const ProjectBriefingRunner = require('./ProjectBriefingRunner');
 const { parseExpression } = require('cron-parser');
 
 class FileWatcher {
@@ -102,6 +103,7 @@ class FileWatcher {
         this._checkRevenueThreshold(),
         this._checkOilSampleReminders(),
         this._processDueSavedExports(),
+        this._processDueProjectBriefings(),
       ]);
       console.log(`[FileWatcher] Checks complete in ${Date.now() - start}ms`);
     } catch (err) {
@@ -311,6 +313,42 @@ class FileWatcher {
       }
     } catch (err) {
       console.error('[FileWatcher] Saved-exports error:', err.message);
+    }
+  }
+
+  /**
+   * Fire any per-project daily briefings whose configured hour has
+   * arrived and that haven't yet run today. Catch-up semantics: if the
+   * server was down at the configured hour, the briefing fires on the
+   * next tick that finds it due (so `send_hour_utc <= current UTC hour`,
+   * not strict equality). Each row is handed to ProjectBriefingRunner,
+   * which does its own status stamping; this method only logs the batch.
+   */
+  async _processDueProjectBriefings() {
+    try {
+      const due = await db('project_daily_email_configs')
+        .where('enabled', true)
+        .whereRaw("send_hour_utc <= EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'UTC'))")
+        .where(function () {
+          this.whereNull('last_run_at')
+            .orWhereRaw("last_run_at < date_trunc('day', NOW() AT TIME ZONE 'UTC')");
+        });
+
+      for (const row of due) {
+        try {
+          const result = await ProjectBriefingRunner.run(row.project_id);
+          console.log(`[FileWatcher] daily briefing for project ${row.project_id} → ${result.status} (delivered=${result.delivered}, failed=${result.failed}, recipients=${result.recipientsResolved})`);
+        } catch (err) {
+          console.error(`[FileWatcher] briefing for project ${row.project_id} threw:`, err.message);
+          // Runner stamps on its own catch path; this is defense in depth.
+        }
+      }
+
+      if (due.length > 0) {
+        console.log(`[FileWatcher] Project briefings processed: ${due.length}`);
+      }
+    } catch (err) {
+      console.error('[FileWatcher] Project-briefings error:', err.message);
     }
   }
 
