@@ -5207,8 +5207,13 @@ async function renderSchedule(main) {
     cell.append(h('div',{style:`font-size:11px;color:${isToday ? 'var(--primary)' : 'var(--text2)'};font-weight:${isToday ? 700 : 400};margin-bottom:2px`}, String(day.getDate())));
 
     projects.filter(p => projectOccupiesDay(p, day)).forEach(p => {
+      const cardChildren = [];
+      if (p.weekend_only) {
+        cardChildren.push(h('span',{style:'background:rgba(255,255,255,0.28);padding:0 4px;border-radius:2px;font-size:9px;font-weight:700;margin-right:4px;letter-spacing:0.3px'}, 'WE'));
+      }
+      cardChildren.push((p.primary_number || p.name || 'Project') + (p.customer_name ? ' · ' + p.customer_name : ''));
       const card = h('div',{
-        title: `${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}`,
+        title: `${p.weekend_only ? '[Weekend Only] ' : ''}${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}`,
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
@@ -5222,7 +5227,7 @@ async function renderSchedule(main) {
           text-overflow:ellipsis;
           white-space:nowrap;
         `,
-      }, (p.primary_number || p.name || 'Project') + (p.customer_name ? ' · ' + p.customer_name : ''));
+      }, cardChildren);
       card.onclick = () => showScheduleEditPopup(p.id, () => { main.innerHTML=''; renderSchedule(main); });
       cell.append(card);
     });
@@ -5612,8 +5617,13 @@ async function renderScheduler(main) {
       const isFullyStaffedDay = fsDays.has(dKey);
       const stamp = isFullyStaffedDay ? '✅ ' : '';
       const countLabel = target > 0 ? ` (${assigned}/${target})` : ` (${assigned})`;
+      const cardChildren = [];
+      if (p.weekend_only) {
+        cardChildren.push(h('span',{style:'background:rgba(255,255,255,0.28);padding:0 4px;border-radius:2px;font-size:9px;font-weight:700;margin-right:4px;letter-spacing:0.3px'}, 'WE'));
+      }
+      cardChildren.push(stamp + (p.primary_number || p.name || 'Project') + countLabel);
       const card = h('div',{
-        title: `${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}\nClick to manage crew for ${dKey}`,
+        title: `${p.weekend_only ? '[Weekend Only] ' : ''}${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}\nClick to manage crew for ${dKey}`,
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
@@ -5627,7 +5637,7 @@ async function renderScheduler(main) {
           text-overflow:ellipsis;
           white-space:nowrap;
         `,
-      }, stamp + (p.primary_number || p.name || 'Project') + countLabel);
+      }, cardChildren);
       card.onclick = () => showSchedulerDayPopup(p, dKey, () => { main.innerHTML=''; renderScheduler(main); });
       cell.append(card);
     });
