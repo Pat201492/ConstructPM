@@ -95,6 +95,7 @@ const PERMISSIONS = {
 
   // ── Exports ──────────────────────────────────────────────
   'exports:read':   [ROLES.ADMIN, ROLES.PROJECT_MANAGER, ROLES.ACCOUNTING],
+  'exports:manage': [ROLES.ADMIN, ROLES.PROJECT_MANAGER], // Create/edit/delete saved & scheduled exports. Accounting is read-only.
 
   // ── Admin ────────────────────────────────────────────────
   'admin:manage':      [ROLES.ADMIN], // Global vars, rate sheet, templates, inbox access

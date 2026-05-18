@@ -1,77 +1,172 @@
-# Plan — Data export rework
+# Plan — Saved & scheduled exports (with email + manual trigger)
 
-> Branch: `export-rework`
+> Branch: `add-export-scheduler`
 > Approved: Pat, 2026-05-18
 
 ## Why
 
-Three real gaps in the current export builder:
+Pat wants to save an export configuration (source + columns + filters + recipients) so that:
+1. It runs automatically on a cron-like schedule and emails the resulting CSV to selected internal users, **and/or**
+2. It can be manually triggered with one click and emailed to the same recipient list immediately.
 
-1. **Project number is invisible.** It lives in the 1:many `project_numbers` table (`{project_id, number, label}`) — no `project_number` column on `projects`. ExportBuilder doesn't join it. Only the hardcoded payroll-timesheet XLSX export touches it, and only for the `"Primary"` label.
-2. **Aliased joins aren't supported.** `projects` and `bids` each have *two* FKs to `contacts` (`customer_contact_id` and `site_contact_id`) — the user needs both surfaced as separate column groups ("Customer Contact: Phone" vs "Site Contact: Phone"). Current code joins each related table at most once.
-3. **Dead parallel code.** `ExportService.getAvailableSources()` and `customExport()` are defined but never called by any route or frontend. Two diverging column lists, no validation in the unused path.
+Concretely: "send me my P&L every Monday at 8am, and let me also fire it on demand mid-week if a client asks."
 
-Plus a UX ask: drag-to-reorder selected columns so the CSV column order matches the user's selection order, and a clearer grouped column tree.
+## Status of email
+
+Per [[email-provider-status]]: the email pipeline is wired but `EMAIL_PROVIDER` / `SENDGRID_API_KEY` aren't set in the local `.env`, so dev sends fall through to a no-op (logged, not delivered). This PR builds the plumbing; the day Pat sets `EMAIL_PROVIDER=sendgrid` + `SENDGRID_API_KEY=…` + `EMAIL_FROM=quotes@<domain>`, every saved+scheduled export starts actually delivering with zero further code change.
 
 ## What changes
 
 | File | Change |
 |---|---|
-| `src/services/exportMetadata.js` (new) | Declarative registry: every source + its native columns + its joins (aliased), keyed by relative column key (e.g. `customer_contact.phone`, `project_numbers.all`). Single source of truth for the UI and the builder. |
-| `src/services/ExportBuilder.js` (rewrite) | Reads metadata. Builds `LEFT JOIN <table> AS <alias> ON <fk> = <alias>.id` for each requested alias. Validates every column against the metadata. Enriches rows with `project_numbers` data via one follow-up `whereIn(project_id)` query — gives Primary # and an aggregated "All Project Numbers" column. |
-| `src/services/ExportService.js` | Delete `getAvailableSources()` and `customExport()` (both confirmed unused). Keep QB/Procore/payroll exports + `toCSV` helper. |
-| `src/routes/exports.js` | Delete `POST /custom` and `GET /sources` (the dead-code surface). `/builder/*` routes unchanged in contract. |
-| `public/index.html` — `renderExports()` (rewrite) | Three-region layout: source picker (top), grouped available-columns tree (left, collapsible per alias group), selected-columns panel (right, drag-to-reorder via native HTML5 DnD). Column key search box. Output column order = selected panel order. |
-| `docs/EXPORT_METADATA.md` (new) | How to add a source / column / aliased join. |
+| `package.json` | Add `cron-parser` (~50KB) for parsing cron strings + computing `next_run_at`. |
+| `migrations/20260518_009_saved_exports.js` (new) | New `saved_exports` table — see schema below. |
+| `src/services/SavedExportRunner.js` (new) | Given a `saved_exports` row: runs `ExportBuilder.execute()`, writes CSV to a temp file, calls `NotificationService.sendEmailWithAttachment` per recipient, updates `last_run_at` / `last_status` / `last_error`. Returns `{ delivered, failed, rowCount }`. |
+| `src/services/FileWatcher.js` | Extend `_poll()` with a new `_processDueSavedExports()` method that selects `saved_exports WHERE enabled = true AND cron IS NOT NULL AND next_run_at <= NOW()`, runs each via `SavedExportRunner`, then recomputes `next_run_at` from the cron string. |
+| `src/routes/savedExports.js` (new) | CRUD + manual trigger — `GET/POST /api/exports/schedules`, `PATCH/DELETE /:id`, `POST /:id/trigger`. Authorize via `exports:read` for read paths and `exports:manage` for write/trigger. |
+| `src/app.js` (or wherever routes are mounted) | Mount the new router. |
+| `migrations/20260518_010_exports_manage_permission.js` (new) | Add `exports:manage` to admin's permissions array on `role_configurations` (also project_manager + accounting if they're allowed to save their own exports — decision below). |
+| `src/routes/users.js` | Add `GET /api/users/email-picker` — narrow endpoint returning `{id, first_name, last_name, email}` for any active user. Used by the recipient picker. Authorized by `exports:manage`. |
+| `public/index.html` — `renderExports()` | Add a "Saved & Scheduled" section above the picker: list of saved configs with toggle/edit/run-now/delete; a "Save current config" button under the existing column-picker that opens a modal for name + cron + recipients. |
+| `docs/EXPORT_METADATA.md` (touched) | Add a short "Scheduling" section pointing at the new flow. |
 
-## Sources covered (9)
+## Schema (`saved_exports`)
 
-`projects`, `bids`, `invoices`, `purchase_orders`, `timesheets`, `equipment`, `customers`, `locations`, `contacts`. Each gets a curated native column list (file paths, password hashes, internal IDs excluded) plus its aliased joins.
+```js
+t.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
+t.string('name', 255).notNullable();              // user-facing label
+t.uuid('owner_user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+t.string('source', 64).notNullable();             // ExportBuilder source key
+t.jsonb('columns').notNullable();                 // ordered column-key array (drag-reorder respected)
+t.jsonb('filters');                               // { start_date, end_date, status }
+t.string('cron', 128);                            // nullable — null = manual-only
+t.jsonb('recipients').notNullable().defaultTo('[]'); // array of user IDs
+t.boolean('enabled').notNullable().defaultTo(true);
+t.timestamp('last_run_at');
+t.string('last_status', 32);                      // 'ok' | 'partial' | 'failed' | 'no_rows'
+t.text('last_error');
+t.timestamp('next_run_at');                       // recomputed from cron after every run
+t.timestamps(true, true);
+t.index('owner_user_id');
+t.index('next_run_at');
+t.index(['enabled', 'next_run_at']);
+```
 
-## Aliased join examples
+## Permission model
 
-- `projects` → `customer_contact` (contacts via `customer_contact_id`) AND `site_contact` (contacts via `site_contact_id`) AND `customer` (customers) AND `location` (locations) AND `pm` (users via `pm_id`) AND `won_bid` (bids via `bid_id`)
-- `bids` → `customer_contact` AND `site_contact` AND `customer` AND `location` AND `estimator` (users via `estimator_id`)
-- Through-joins (e.g. `invoices` → `project` → `customer`) handled by `requires` field on join definitions
+- Read & trigger own saved exports: `exports:read` (already granted to admin, PM, accounting)
+- Create/edit/delete: new `exports:manage`. Granted to **admin** by default. **PM** also gets it (so estimators/PMs can wire up their own recurring exports without bothering an admin). Accounting kept on read-only (per the existing pattern of "accounting reads, doesn't author").
+- Listing scope: by default, a user only sees saved exports they `owner_user_id` — admins see all (consistent with the rest of the app).
 
-## Project numbers (special)
+## SavedExportRunner shape
 
-Pat's `project_numbers` table is 1:many with extensible labels. Approach:
-- **Native column** `project_numbers.primary` on the `projects` source: just the number where `label = 'Primary'` (most common ask).
-- **Native column** `project_numbers.all` on the `projects` source: every label:number pair concatenated as `Primary: 25-001; Customer PO #: 4711; Internal #: PROJ-A`. Survives new labels without code changes.
-- Enrichment happens post-query: pull all matching `project_numbers` rows in one `whereIn` keyed by project IDs, attach to rows in JS.
+```js
+async run(savedExportRow) {
+  const { headers, rows } = await ExportBuilder.execute(row.source, row.columns, row.filters);
+  if (rows.length === 0) {
+    await markRun(row.id, 'no_rows', null);
+    return { delivered: 0, failed: 0, rowCount: 0, skipped: 'no_rows' };
+  }
+  const csv = ExportService.toCSV(headers, rows);
+  const tmpPath = await writeTempCsv(csv);
+  try {
+    const recipients = await fetchActiveEmails(row.recipients);
+    let delivered = 0, failed = 0;
+    for (const r of recipients) {
+      const result = await NotificationService.sendEmailWithAttachment({
+        to: r.email,
+        subject: `[ConstructPM] ${row.name}`,
+        html: emailBody(row, rows.length),
+        filePath: tmpPath,
+        filename: `${slug(row.name)}_${ymd()}.csv`,
+        contentType: 'text/csv',
+      });
+      if (result.delivered) delivered++; else failed++;
+    }
+    await markRun(row.id, failed === 0 ? 'ok' : 'partial', failed > 0 ? `${failed} failed deliveries` : null);
+    return { delivered, failed, rowCount: rows.length };
+  } finally {
+    fs.promises.unlink(tmpPath).catch(() => {});
+  }
+}
+```
 
-## Drag-to-reorder UI
+## Scheduler tick (FileWatcher extension)
 
-- Native HTML5 `draggable="true"` on each selected-column chip; `dragover`/`drop` swap positions in `selectedColumns[]`
-- Re-render the panel on each drop
-- Output CSV header + cell order respect array order
+```js
+async _processDueSavedExports() {
+  const due = await db('saved_exports')
+    .where('enabled', true)
+    .whereNotNull('cron')
+    .where(function () { this.whereNull('next_run_at').orWhere('next_run_at', '<=', new Date()); });
+  for (const row of due) {
+    try {
+      await SavedExportRunner.run(row);
+    } catch (err) {
+      await db('saved_exports').where('id', row.id).update({
+        last_run_at: new Date(), last_status: 'failed', last_error: err.message,
+      });
+    }
+    // Recompute next_run_at from cron
+    const next = parseExpression(row.cron).next().toDate();
+    await db('saved_exports').where('id', row.id).update({ next_run_at: next });
+  }
+}
+```
+
+Hooked into the existing `_poll()` alongside `_checkBidInactivity` / `_checkOverduePayments` / etc. — same hourly cadence, same `Promise.all` batch. **Precision is therefore hour-level** (within the FileWatcher tick). Acceptable for "Monday 8am" style schedules; finer scheduling is Pass 2.
+
+## UI changes
+
+A new section above the existing Source picker on the Data Export tab:
+
+```
+┌─ Saved & Scheduled Exports ────────────────────────────────┐
+│ Name              Source     Schedule         Recipients   │
+│ Weekly P&L        invoices   Mon 08:00        2  [▶ Run] [✎] [⏸] [×] │
+│ Monthly Equipment equipment  1st of month     1  [▶ Run] [✎] [⏸] [×] │
+│ + Save current config                                       │
+└────────────────────────────────────────────────────────────┘
+```
+
+- Status column shows `last_status` + `last_run_at` ("ok · 2h ago")
+- Run icon (▶) does `POST /:id/trigger`, shows toast with rowCount + delivered/failed
+- Edit (✎) opens a modal with name + cron (with friendly preset chips: "Daily 8am", "Weekly Monday 8am", "Monthly 1st 8am") + recipient multi-select
+- Pause (⏸) toggles `enabled`
+- Delete (×) confirms then DELETEs
+- "Save current config" only enabled when the user has picked a source + at least one column in the existing builder below; clicking opens the same modal pre-filled
+
+Recipient picker: multi-select of active users from `/api/users/email-picker`. Owner is auto-included unless they uncheck themselves.
 
 ## What does NOT change
 
-- QuickBooks / Procore / payroll hardcoded exports (different purpose; not part of the column-picker)
-- Schema (no migration)
-- Auth (`exports:read` permission gate unchanged)
-- The `/builder/preview` and `/builder/download` route contracts — same `{source, columns, filters}` body shape
+- ExportBuilder, exportMetadata, the column picker, drag-to-reorder
+- QuickBooks / Procore / payroll hardcoded exports
+- NotificationService (already supports attachments via `sendEmailWithAttachment`)
+- FileWatcher's cadence / global-variable config
 
 ## Risks considered
 
-1. **Aliased self-join SQL** — Postgres handles `LEFT JOIN contacts AS customer_contact … LEFT JOIN contacts AS site_contact …` fine. Knex `.leftJoin('contacts as customer_contact', ...)` syntax is standard.
-2. **Column-key namespace change** — keys go from `invoices.invoice_number` (absolute) to `invoice_number` / `project.name` (source-relative). Saved export configs (if any persisted; none known) won't round-trip.
-3. **`project_numbers.all` cell content** — concatenated string in CSV; user spreadsheets will see it as one cell. Acceptable per design discussion.
-4. **DnD on touch** — native HTML5 DnD doesn't work on mobile. Mobile export is not a current use case (admin/accounting roles on desktop); deferring.
+1. **Email is parked** — dev runs will write the temp CSV and return `{delivered:false, provider:'none', reason:'no provider configured'}`. The runner records `last_status='partial'` and `last_error='N failed deliveries'` — that's visible in the UI as a yellow status so Pat knows it ran but didn't deliver. The day email is unparked, status flips to `ok`.
+2. **Cron timezone** — `cron-parser` defaults to UTC. PMs work in the user's local timezone. v1 stores `cron` plus interprets it in **server timezone** (the api container has no TZ set, so UTC). Friendly preset chips in the UI compute the right UTC cron for the user's intent (e.g. "Mon 8am ET" → "0 13 * * 1"). Custom cron entry shows a "next run in <server TZ>" preview. Pass 2: per-saved-export timezone column.
+3. **Long-running exports inside FileWatcher tick** — `Promise.all` runs concurrently with the bid/payment/equipment checks; an export with 10k rows might take a few seconds. Acceptable; CSV is small enough. If we later have huge exports, push to a Bull queue.
+4. **Recipient leaving the org** — if a user in `recipients` is deactivated, `fetchActiveEmails` skips them. `last_error` notes how many were skipped.
+5. **Column key validity drift** — if a column key in a saved config later becomes invalid (e.g. a column was removed from metadata), the export fails with the existing "Invalid column(s)" error; the runner catches it and records `last_status='failed'`.
 
-## Out of scope (Pass 2 candidates)
+## Out of scope (Pass 2)
 
-- Saved export presets ("Monthly P&L" reusable templates)
-- Per-column filters (date ranges per column, status sub-filters)
-- Server-side aggregations (SUM, COUNT, GROUP BY)
-- Touch-friendly reorder
+- Per-saved-export timezone
+- Sub-hour precision (move to true cron daemon or Bull `repeatable` jobs)
+- Templated email bodies / attachments other than CSV
+- Distribution via Slack / other channels
+- Run history table (we only track `last_run_at` / `last_status` / `last_error`; a `saved_export_runs` audit log is a separate PR)
 
 ## Verification
 
-1. Pick `projects` source → check `Customer Contact: Phone`, `Site Contact: Phone`, `PM: First Name`, `Primary #`, `All Project Numbers`, plus a few native columns → download CSV → confirm two distinct contact phones, correct PM name, primary number, and the aggregated label:number string
-2. Drag the `Site Contact: Phone` chip above `Customer Contact: Phone` → download → verify CSV column order reflects the drag
-3. Each of the 9 sources opens its picker without error; at least one join column from each works
-4. `POST /api/exports/custom` returns 404 (route removed)
-5. Dev login → Admin → Exports tab → all three actions (Preview, Download, Clear All) work
+1. Migration runs cleanly: `docker compose up -d --build` → table present, indexes present
+2. `POST /api/exports/schedules` with `{name, source, columns, filters, cron, recipients, enabled}` returns the row with `next_run_at` populated
+3. `POST /api/exports/schedules/:id/trigger` runs the export, returns `{delivered, failed, rowCount}`. With email parked: `delivered=0, failed=N`, `last_status='partial'`, a temp CSV was written and deleted, `last_run_at` updated
+4. Edit the row's `cron` to `* * * * *` (every minute), enable, wait one FileWatcher tick — confirm `last_run_at` advances and `next_run_at` rolls forward
+5. `GET /api/exports/schedules` returns the user's saved configs; admin sees all
+6. UI: Saved & Scheduled section renders, "Save current config" pre-fills, Run-now shows toast with the right counts, Pause toggles enabled, Delete confirms then removes the row
+7. `GET /api/exports/schedules` with a deactivated user in `recipients` still runs but skips them and notes the skip in `last_error`

@@ -6681,10 +6681,105 @@ async function renderExports(main) {
 
   const sources = await api('/exports/builder/sources');
 
-  // ── State ────────────────────────────────────────────────
+  // ── State (column-picker) ────────────────────────────────
   let selectedSource = null;
   let selectedColumns = []; // ordered keys — drag-to-reorder mutates in place
   let columnSearch = '';
+
+  // ── State (scheduler) ────────────────────────────────────
+  // Cached per renderExports() invocation. Users added/deactivated during
+  // the session won't appear/disappear until the Exports tab is re-rendered
+  // (any tab switch). Acceptable: org membership doesn't churn intra-session.
+  let emailPickerUsers = null;
+  async function getEmailPicker() {
+    if (emailPickerUsers !== null) return emailPickerUsers;
+    try { const r = await api('/users/email-picker'); emailPickerUsers = r.users || []; }
+    catch { emailPickerUsers = []; }
+    return emailPickerUsers;
+  }
+
+  // ── Scheduled section (top of page) ──────────────────────
+  const scheduledContainer = h('div',{id:'exp-scheduled',style:'margin-bottom:24px'});
+  main.append(scheduledContainer);
+
+  function fmtRel(when) {
+    const ms = Date.now() - new Date(when).getTime();
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    const hr = Math.floor(m / 60);
+    if (hr < 24) return hr + 'h ago';
+    const d = Math.floor(hr / 24);
+    return d + 'd ago';
+  }
+
+  function statusBadge(s) {
+    if (!s.last_run_at) return h('span',{style:'color:var(--text3);font-size:11px'},'never run');
+    const color = s.last_status === 'ok' ? 'var(--green)'
+      : s.last_status === 'partial' ? 'var(--yellow)'
+      : s.last_status === 'no_rows' ? 'var(--text3)'
+      : 'var(--red)';
+    const node = h('span',{style:'color:'+color+';font-size:11px'}, s.last_status + ' · ' + fmtRel(s.last_run_at));
+    if (s.last_error) node.title = s.last_error;
+    return node;
+  }
+
+  function scheduleActions(s, refresh) {
+    const wrap = h('div',{style:'display:flex;gap:4px;flex-wrap:wrap'});
+    wrap.append(h('button',{className:'btn btn-sm',style:'padding:2px 8px',title:'Run now',onclick:async()=>{
+      try {
+        const r = await api('/exports/schedules/'+s.id+'/trigger',{method:'POST'});
+        const extra = r.skipped ? ', skipped ' + r.skipped : '';
+        alert('Run complete: ' + r.rowCount + ' rows · delivered ' + r.delivered + ', failed ' + r.failed + extra);
+        refresh();
+      } catch (e) { alert(e.message); }
+    }},'▶'));
+    wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:'Edit',onclick:()=>showScheduleModal({mode:'edit',existing:s,onSaved:refresh})},'✎'));
+    wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:s.enabled?'Pause':'Resume',onclick:async()=>{
+      try { await api('/exports/schedules/'+s.id,{method:'PATCH',body:JSON.stringify({enabled:!s.enabled})}); refresh(); }
+      catch (e) { alert(e.message); }
+    }}, s.enabled ? '⏸' : '▶'));
+    wrap.append(h('button',{className:'btn-red btn-sm',style:'padding:2px 8px',title:'Delete',onclick:async()=>{
+      if (!confirm('Delete saved export "' + s.name + '"?')) return;
+      try { await api('/exports/schedules/'+s.id,{method:'DELETE'}); refresh(); }
+      catch (e) { alert(e.message); }
+    }},'×'));
+    return wrap;
+  }
+
+  async function loadAndRenderSchedules() {
+    scheduledContainer.innerHTML = '';
+    const card = h('div',{style:'background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px'});
+    card.append(h('div',{style:'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px'},[
+      h('div',{style:'font-size:14px;font-weight:700'},'Saved & Scheduled Exports'),
+      h('span',{style:'font-size:11px;color:var(--text3)'},'Auto-emailed on schedule, or trigger anytime'),
+    ]));
+    let schedules = [];
+    try { const r = await api('/exports/schedules'); schedules = r.schedules || []; }
+    catch (e) {
+      card.append(h('p',{style:'color:var(--red);font-size:12px'},'Could not load: ' + e.message));
+      scheduledContainer.append(card);
+      return;
+    }
+    if (schedules.length === 0) {
+      card.append(h('p',{style:'color:var(--text3);font-size:12px;margin:6px 0'},
+        'No saved exports yet. Build a config below and click "Save current config".'));
+    } else {
+      const rows = schedules.map(s => [
+        h('span',{style: s.enabled ? '' : 'opacity:0.5'}, s.name),
+        sources[s.source] ? sources[s.source].label : s.source,
+        s.cron || '— manual only —',
+        (s.recipients || []).length + ' recipient' + ((s.recipients || []).length === 1 ? '' : 's'),
+        statusBadge(s),
+        scheduleActions(s, loadAndRenderSchedules),
+      ]);
+      card.append(makeTable(['Name','Source','Schedule','Recipients','Status',''], rows));
+    }
+    scheduledContainer.append(card);
+  }
+
+  await loadAndRenderSchedules();
 
   // ── Top bar ──────────────────────────────────────────────
   const topBar = h('div',{style:'display:flex;gap:12px;align-items:end;margin-bottom:20px;flex-wrap:wrap'});
@@ -6787,6 +6882,23 @@ async function renderExports(main) {
     const actions = h('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'});
     actions.append(h('button',{className:'btn',onclick:doDownload},'Download CSV'));
     actions.append(h('button',{className:'btn-outline',onclick:doPreview},'Preview'));
+    actions.append(h('button',{className:'btn-outline',title:'Save this source + selected columns as a recurring or on-demand emailed export',onclick:()=>{
+      if (!selectedSource || selectedColumns.length === 0) return alert('Pick a source and columns first');
+      showScheduleModal({
+        mode: 'create',
+        prefill: {
+          source: selectedSource,
+          columns: selectedColumns.slice(),
+          filters: {
+            start_date: readDateInput(startInput) || undefined,
+            end_date: readDateInput(endInput) || undefined,
+          },
+          enabled: true,
+          recipients: (S.user && S.user.id) ? [S.user.id] : [],
+        },
+        onSaved: loadAndRenderSchedules,
+      });
+    }},'Save current config'));
     actions.append(h('button',{className:'btn-outline',style:'margin-left:auto',onclick:()=>{
       selectedColumns = [];
       $$('#exp-left input.exp-col').forEach(cb=>{cb.checked=false;});
@@ -6958,6 +7070,106 @@ async function renderExports(main) {
       document.body.append(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (e) { alert(e.message); }
+  }
+
+  // ── Schedule modal (create / edit a saved_export) ────────
+  function showScheduleModal({ mode, existing, prefill, onSaved }) {
+    const initial = existing || prefill || {};
+    const overlay = h('div',{className:'modal-overlay'});
+    const modal = h('div',{className:'modal',style:'max-width:600px'});
+    modal.append(h('h2',{},(mode === 'edit' ? 'Edit' : 'Save') + ' Scheduled Export'));
+
+    const nameInp = h('input',{type:'text',placeholder:'e.g. Weekly P&L',value:initial.name||'',style:'width:100%'});
+    modal.append(h('div',{style:'margin-bottom:10px'},[
+      h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'},'Name'),
+      nameInp,
+    ]));
+
+    const sourceLabel = (initial.source && sources[initial.source]) ? sources[initial.source].label : (initial.source || '—');
+    const colCount = (initial.columns || []).length;
+    modal.append(h('div',{style:'background:var(--bg3);padding:8px 10px;border-radius:4px;margin-bottom:10px;font-size:12px;color:var(--text2)'},[
+      h('div',{},'Source: ' + sourceLabel),
+      h('div',{},'Columns: ' + colCount + ' selected'
+        + (mode === 'edit' ? ' (to change, pick source + columns in the builder below and use "Save current config")' : '')),
+    ]));
+
+    const cronInp = h('input',{type:'text',placeholder:'leave blank for manual-only',value:initial.cron||'',style:'width:100%'});
+    const chips = h('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-top:4px'});
+    const PRESETS = [
+      {label:'Manual only', cron:''},
+      {label:'Daily 8am UTC', cron:'0 8 * * *'},
+      {label:'Weekly Mon 8am UTC', cron:'0 8 * * 1'},
+      {label:'Monthly 1st 8am UTC', cron:'0 8 1 * *'},
+    ];
+    PRESETS.forEach(p => {
+      chips.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px;font-size:11px',onclick:(e)=>{e.preventDefault();cronInp.value=p.cron;}}, p.label));
+    });
+    modal.append(h('div',{style:'margin-bottom:10px'},[
+      h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'},'Schedule (cron, server timezone)'),
+      cronInp, chips,
+    ]));
+
+    const recipsContainer = h('div',{style:'max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
+    modal.append(h('div',{style:'margin-bottom:10px'},[
+      h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'},'Recipients'),
+      recipsContainer,
+    ]));
+    const selectedRecipients = new Set(initial.recipients || []);
+    (async () => {
+      const users = await getEmailPicker();
+      recipsContainer.innerHTML = '';
+      if (users.length === 0) {
+        recipsContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
+        return;
+      }
+      users.forEach(u => {
+        const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
+        const cb = h('input',{type:'checkbox',style:'width:auto'});
+        cb.checked = selectedRecipients.has(u.id);
+        cb.onchange = () => { if (cb.checked) selectedRecipients.add(u.id); else selectedRecipients.delete(u.id); };
+        row.append(cb);
+        row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
+        recipsContainer.append(row);
+      });
+    })();
+
+    const enabledCb = h('input',{type:'checkbox',style:'width:auto'});
+    enabledCb.checked = initial.enabled !== false;
+    modal.append(h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:14px;cursor:pointer'},[
+      enabledCb,
+      document.createTextNode('Enabled (scheduled runs fire when checked; manual trigger always works)'),
+    ]));
+
+    const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end'});
+    actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+    actions.append(h('button',{className:'btn',onclick:async()=>{
+      const name = nameInp.value.trim();
+      if (!name) return alert('Name is required');
+      if (!initial.source) return alert('No source — pick a source + columns in the builder below first');
+      if (!(initial.columns && initial.columns.length > 0)) return alert('No columns selected');
+      const payload = {
+        name,
+        source: initial.source,
+        columns: initial.columns,
+        filters: initial.filters || {},
+        cron: cronInp.value.trim() || null,
+        recipients: [...selectedRecipients],
+        enabled: enabledCb.checked,
+      };
+      try {
+        if (mode === 'edit') {
+          await api('/exports/schedules/' + existing.id, { method:'PATCH', body: JSON.stringify(payload) });
+        } else {
+          await api('/exports/schedules', { method:'POST', body: JSON.stringify(payload) });
+        }
+        overlay.remove();
+        if (onSaved) onSaved();
+      } catch (e) { alert(e.message); }
+    }}, mode === 'edit' ? 'Save Changes' : 'Save Export'));
+    modal.append(actions);
+
+    overlay.append(modal);
+    document.body.append(overlay);
   }
 
   renderLeft();

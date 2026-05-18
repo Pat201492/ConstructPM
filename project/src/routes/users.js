@@ -65,6 +65,28 @@ router.get('/on-schedule', async (req, res, next) => {
 });
 
 /**
+ * GET /api/users/email-picker
+ *
+ * Narrow endpoint for the export-scheduler recipient picker (and any other
+ * "pick a teammate to email" surface). Returns active users with email
+ * present — id + first/last name + email. Open to roles that can see the
+ * Exports tab: admin, project_manager, accounting.
+ */
+router.get('/email-picker', async (req, res, next) => {
+  try {
+    if (!['admin', 'project_manager', 'accounting'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const users = await db('users')
+      .select('id', 'first_name', 'last_name', 'email')
+      .where('active', true)
+      .whereNotNull('email')
+      .orderBy('first_name');
+    res.json({ users });
+  } catch (err) { next(err); }
+});
+
+/**
  * GET /api/users
  * List all users (Admin only, with filters)
  */
