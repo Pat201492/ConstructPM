@@ -4472,27 +4472,54 @@ async function showTicketFull(tn){
         ])));
     }
 
-    // Manual web entry — type or paste an equipment ID, hit Add (or
-    // Enter). Appends to the existing filled_items so mobile + web
-    // entries coexist. No client-side validation: the pickup-time
-    // lookup uses barcode_id OR id, and unknown values are surfaced
-    // visibly enough on the modal for the user to catch typos.
-    const addRow=h('div',{style:'display:flex;gap:6px;margin:8px 0 14px'});
-    const idInput=h('input',{placeholder:'Equipment ID / barcode', style:'flex:1'});
-    const addBtn=h('button',{className:'btn btn-sm',onclick:async()=>{
-      const v=idInput.value.trim();
-      if(!v) return;
-      const next = [...filled, { equipment_number: v, source: 'web' }];
-      try {
-        await api('/equipment-tickets/'+tn+'/fill',{method:'POST',
-          body: JSON.stringify({items: next})});
-        idInput.value='';
-        await render();
-      } catch(e){ alert(e.message); }
-    }},'+ Add');
-    idInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); addBtn.click(); } });
-    addRow.append(idInput); addRow.append(addBtn);
-    modal.append(addRow);
+    // Searchable picker scoped to in-shop equipment (status=available),
+    // minus anything already tagged on this ticket so the same piece
+    // can't be double-added. Items show as "barcode — name" so a user
+    // can find a piece by either the label or the friendly name. When
+    // the pool is empty (nothing in the shop, or already all on this
+    // ticket) the picker is replaced with an inline empty-state.
+    let inShop = [];
+    try {
+      const r = await api('/equipment?status=available&limit=500');
+      inShop = r.items || [];
+    } catch {}
+    const onTicket = new Set(filled.map(f => String(f.equipment_number || f.barcode_id || '').toLowerCase()));
+    const pool = inShop.filter(e => !onTicket.has(String(e.barcode_id||'').toLowerCase()));
+
+    if (pool.length === 0) {
+      modal.append(h('p',{
+        style:'background:var(--bg3);padding:10px 12px;border-radius:6px;color:var(--text2);font-size:13px;margin:8px 0 14px;font-style:italic',
+      }, inShop.length === 0
+        ? 'No equipment left in shop.'
+        : 'All in-shop equipment is already tagged on this ticket.'));
+    } else {
+      const addRow = h('div',{style:'display:flex;gap:6px;margin:8px 0 14px;align-items:flex-end'});
+      // Picker-only — no free-text barcodes typed in. User picks from
+      // the in-shop pool; the hidden value carries the equipment.id and
+      // we look it up on Add to grab the barcode + name for the payload.
+      const drop = searchDrop('et-add-eq', `Add equipment (${pool.length} in shop)`,
+        pool, e => `${e.barcode_id} — ${e.equipment_name}`);
+      drop.group.style.flex = '1';
+      drop.group.style.marginBottom = '0';
+      let selected = null;
+      drop.input.onselect = (item) => { selected = item; };
+      const addBtn = h('button',{className:'btn btn-sm',onclick:async()=>{
+        if (!selected) return alert('Pick an item from the list first.');
+        const next = [...filled, {
+          equipment_number: selected.barcode_id,
+          equipment_name: selected.equipment_name,
+          source: 'web',
+        }];
+        try {
+          await api('/equipment-tickets/'+tn+'/fill',{method:'POST',
+            body: JSON.stringify({items: next})});
+          await render();
+        } catch(e){ alert(e.message); }
+      }},'+ Add');
+      addRow.append(drop.group);
+      addRow.append(addBtn);
+      modal.append(addRow);
+    }
 
     const actions=h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:16px'});
     actions.append(h('button',{className:'btn-outline',onclick:()=>{ stopPoll=true; overlay.remove(); }},'Close'));
