@@ -53,6 +53,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Local-only secrets (SendGrid key, etc.) live in .env. The file is
+    # gitignored — see .env.example for the keys that belong here. Values
+    # in `environment:` below take precedence if a name overlaps.
+    env_file:
+      - .env
     environment:
       NODE_ENV: development
       ENABLE_DEV_LOGIN: 'true'
