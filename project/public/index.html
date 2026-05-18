@@ -3643,6 +3643,16 @@ async function renderOilSamplesPage(main) {
   statusSel.append(h('option',{value:'returned'},'Returned'));
   searchRow.append(eqInput); searchRow.append(locInput); searchRow.append(statusSel);
   searchRow.append(h('button',{className:'btn btn-sm',onclick:loadSamples},'Search'));
+  // New Oil Sample — mirrors the mobile foreman flow without the
+  // photo-upload + AI extraction step. Web-created samples skip
+  // pending_data_confirm and go straight to whatever status the user
+  // submits; the route still defaults to pending_data_confirm for
+  // safety, which matches mobile.
+  searchRow.append(h('button',{className:'btn',style:'margin-left:auto',onclick:async()=>{
+    let projects = [];
+    try { const r = await api('/projects?limit=100'); projects = r.projects || []; } catch {}
+    showOilSampleCreateModal(projects, () => loadSamples());
+  }},'+ New Sample'));
   main.append(searchRow);
 
   const content=h('div');
@@ -3688,6 +3698,70 @@ async function renderOilSamplesPage(main) {
   await loadSamples();
 }
 
+// Oil Sample create modal — text-only equivalent of the mobile flow
+// (which captures a photo and runs AI extraction). Web users fill the
+// fields directly. Project is required; everything else is optional —
+// matches the backend route's contract.
+function showOilSampleCreateModal(projects, onSaved) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:560px'});
+  modal.append(h('h2',{},'New Oil Sample'));
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:12px'},
+    'Manual entry — mobile captures these via photo + AI extraction; this form is the desktop equivalent.'));
+
+  const projDrop = searchDrop('osc-proj', 'Project', projects,
+    p => (p.primary_number ? `${p.primary_number} — ${p.name}` : p.name));
+  modal.append(projDrop.group);
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const grid = h('div',{className:'form-grid'});
+  grid.append(h('div',{className:'form-group'},[
+    h('label',{},'Equipment ID'),
+    h('input',{id:'osc-eqid',placeholder:'Barcode / equipment ID'}),
+  ]));
+  grid.append(h('div',{className:'form-group'},[
+    h('label',{},'Sample Date'),
+    h('input',{id:'osc-date',type:'date',value:todayStr}),
+  ]));
+  grid.append(h('div',{className:'form-group'},[
+    h('label',{},'Equipment Location'),
+    h('input',{id:'osc-loc',placeholder:'e.g. transformer #3'}),
+  ]));
+  grid.append(h('div',{className:'form-group'},[
+    h('label',{},'Sample Type'),
+    h('input',{id:'osc-type',placeholder:'e.g. routine, post-failure'}),
+  ]));
+  modal.append(grid);
+  modal.append(h('div',{className:'form-group'},[
+    h('label',{},'Condition Notes'),
+    h('textarea',{id:'osc-notes',rows:3,style:'width:100%;font-family:inherit;font-size:13px;padding:8px',placeholder:'Anything odd about the oil, sample container, etc.'}),
+  ]));
+
+  const btns = h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:12px'});
+  btns.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+  btns.append(h('button',{className:'btn',onclick:async()=>{
+    const projectId = $('#osc-proj').value;
+    if (!projectId) return alert('Pick a project.');
+    try {
+      await api('/oil-samples',{method:'POST',body:JSON.stringify({
+        project_id: projectId,
+        equipment_id_field: $('#osc-eqid').value.trim() || null,
+        equipment_location: $('#osc-loc').value.trim() || null,
+        sample_date: $('#osc-date').value || null,
+        sample_type: $('#osc-type').value.trim() || null,
+        condition_notes: $('#osc-notes').value.trim() || null,
+      })});
+      overlay.remove();
+      if (onSaved) onSaved();
+    } catch (e) { alert(e.message); }
+  }},'Save Sample'));
+  modal.append(btns);
+
+  overlay.append(modal); document.body.append(overlay);
+  setTimeout(() => projDrop.input.focus(), 50);
+}
+
 // ═══════════════════════════════════════════════════════════
 // FIELD NOTES PAGE
 // ═══════════════════════════════════════════════════════════
@@ -3722,7 +3796,17 @@ async function renderFieldNotesPage(main) {
   const content=h('div');
   main.append(content);
 
-  projSel.onchange=loadNotes;
+  // Re-load when the searchable project picker selects a new value.
+  // Was `projSel.onchange` referencing a variable from before the
+  // searchDrop conversion; threw ReferenceError on page load.
+  fnDrop.input.onselect = loadNotes;
+
+  // New Note button — POSTs to /field-notes. Project + note text are
+  // required; date defaults to today. Mirrors the mobile foreman flow
+  // so a note can be logged from the web without the mobile app.
+  filterRow.append(h('button',{className:'btn',style:'margin-left:auto',onclick:()=>{
+    showFieldNoteCreateModal(fnProjects, () => loadNotes());
+  }},'+ New Note'));
 
   async function loadNotes() {
     const params=new URLSearchParams();
@@ -3759,6 +3843,61 @@ async function renderFieldNotesPage(main) {
     } catch(e) { content.innerHTML='<p style="color:var(--red)">'+e.message+'</p>'; }
   }
   await loadNotes();
+}
+
+// Field Note create modal — mirrors the mobile foreman flow so a note
+// can be logged from the web (admin or PM filling in for a foreman).
+// Project + text required; date defaults to today; timezone is sent
+// from the browser so the stored note is anchored to the author's
+// clock just like a mobile-created note.
+function showFieldNoteCreateModal(projects, onSaved) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:560px'});
+  modal.append(h('h2',{},'New Field Note'));
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:12px'},
+    'Pick a project, write the note, save. Times are stored in your local timezone so future readers see what your clock said.'));
+
+  const form = h('div');
+  const projDrop = searchDrop('fnc-proj', 'Project', projects,
+    p => (p.primary_number ? `${p.primary_number} — ${p.name}` : p.name));
+  form.append(projDrop.group);
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  form.append(h('div',{className:'form-group'},[
+    h('label',{},'Date'),
+    h('input',{id:'fnc-date',type:'date',value:todayStr}),
+  ]));
+  form.append(h('div',{className:'form-group'},[
+    h('label',{},'Note'),
+    h('textarea',{id:'fnc-text',rows:6,placeholder:'What happened on site today…',style:'width:100%;font-family:inherit;font-size:13px;padding:8px'}),
+  ]));
+  modal.append(form);
+
+  const btns = h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:12px'});
+  btns.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+  btns.append(h('button',{className:'btn',onclick:async()=>{
+    const projectId = $('#fnc-proj').value;
+    const noteText = $('#fnc-text').value.trim();
+    const noteDate = $('#fnc-date').value;
+    if (!projectId) return alert('Pick a project.');
+    if (!noteText) return alert('Note text is required.');
+    try {
+      // Send the browser's timezone so the stored author_timezone
+      // matches what mobile would write (Intl.DateTimeFormat is the
+      // same API on both sides).
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await api('/field-notes',{method:'POST',body:JSON.stringify({
+        project_id: projectId, note_date: noteDate, note_text: noteText, timezone: tz,
+      })});
+      overlay.remove();
+      if (onSaved) onSaved();
+    } catch (e) { alert(e.message); }
+  }},'Save Note'));
+  modal.append(btns);
+
+  overlay.append(modal); document.body.append(overlay);
+  setTimeout(() => projDrop.input.focus(), 50);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4474,7 +4613,18 @@ async function showTicketFull(tn){
       <strong>Status:</strong> ${p.status}`;
     modal.append(info);
 
-    modal.append(h('h3',{style:'font-size:14px;margin:8px 0 6px'},'Requested'));
+    const reqHeader = h('div',{style:'display:flex;align-items:center;gap:8px;margin:8px 0 6px'});
+    reqHeader.append(h('h3',{style:'font-size:14px;margin:0;flex:1'},'Requested'));
+    reqHeader.append(h('button',{className:'btn-outline btn-sm',onclick:()=>{
+      // Edit-lines flow: swap the read-only table for an editable one.
+      // Mirrors the etRequest form's structure (plain inputs, not the
+      // full cascading datalist — for typo fixes / late additions
+      // after the ticket is already in the shop's queue). Saving
+      // resets the ticket's filled list (per backend contract) — warn
+      // the user if anything is already tagged.
+      showTicketEditLines(d, () => render());
+    }},'✎ Edit Lines'));
+    modal.append(reqHeader);
     modal.append(makeTable(['Qty','Type','Subtype','Equipment','Manufacturer'],
       d.lines.map(l=>[l.quantity,l.equipment_type||'—',l.equipment_subtype||'—',l.equipment_name||'—',l.manufacturer||'—'])));
 
@@ -4585,6 +4735,101 @@ async function showTicketFull(tn){
       try { await render(); } catch {}
     }
   })();
+}
+
+// Edit ticket lines after submission. Backend route resets filled_items
+// to [] on any line change, so any equipment currently tagged out via
+// /fill reverts to status='available' (handled server-side in
+// syncTicketStatus). We surface the impact in a confirm so the user
+// knows.
+function showTicketEditLines(detail, onSaved) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:680px;max-height:90vh;overflow-y:auto'});
+  modal.append(h('h2',{},'Edit ticket #' + detail.project.ticket_number));
+
+  // Snapshot filled_items so we can warn if the user is about to wipe
+  // a list of already-tagged equipment.
+  let priorFilled = 0;
+  if (detail.lines && detail.lines[0]?.filled_items) {
+    try {
+      const arr = typeof detail.lines[0].filled_items === 'string'
+        ? JSON.parse(detail.lines[0].filled_items) : detail.lines[0].filled_items;
+      priorFilled = (arr || []).length;
+    } catch {}
+  }
+  if (priorFilled > 0) {
+    modal.append(h('p',{
+      style:'background:rgba(212,179,76,0.12);border:1px solid var(--yellow);border-radius:6px;padding:8px 12px;font-size:13px;color:var(--yellow);margin-bottom:12px',
+    }, `⚠ Saving will clear the ${priorFilled} item${priorFilled===1?'':'s'} already tagged out on this ticket. Those pieces revert to "available" in the shop.`));
+  }
+
+  // Editable copy. Plain inputs — not the cascading datalist from
+  // etRequest — to keep this fast for the common case (qty fix or
+  // add a missing line). Power-users can still delete and re-create
+  // the ticket if they need the full picker.
+  const lines = (detail.lines || []).map(l => ({
+    quantity: parseInt(l.quantity,10) || 1,
+    equipment_type: l.equipment_type || '',
+    equipment_subtype: l.equipment_subtype || '',
+    equipment_name: l.equipment_name || '',
+    manufacturer: l.manufacturer || '',
+  }));
+
+  const tbl = h('table',{className:'data-table',style:'width:100%'});
+  tbl.innerHTML = '<thead><tr><th style="width:60px">Qty</th><th>Type</th><th>Subtype</th><th>Equipment Name</th><th>Manufacturer</th><th></th></tr></thead>';
+  const tb = h('tbody');
+  tbl.append(tb);
+  function drawLines() {
+    tb.innerHTML = '';
+    lines.forEach((ln, i) => {
+      const tr = h('tr');
+      tr.innerHTML = `
+        <td><input type="text" inputmode="numeric" value="${parseInt(ln.quantity)||1}" data-i="${i}" data-f="quantity" style="width:50px"></td>
+        <td><input data-i="${i}" data-f="equipment_type" value="${(ln.equipment_type||'').replace(/"/g,'&quot;')}" style="max-width:160px"></td>
+        <td><input data-i="${i}" data-f="equipment_subtype" value="${(ln.equipment_subtype||'').replace(/"/g,'&quot;')}" style="max-width:160px"></td>
+        <td><input data-i="${i}" data-f="equipment_name" value="${(ln.equipment_name||'').replace(/"/g,'&quot;')}" style="max-width:220px"></td>
+        <td><input data-i="${i}" data-f="manufacturer" value="${(ln.manufacturer||'').replace(/"/g,'&quot;')}" style="max-width:160px"></td>
+        <td><button class="btn-red btn-sm" data-del="${i}" style="padding:2px 8px">×</button></td>`;
+      tb.append(tr);
+    });
+    tb.querySelectorAll('input[data-f]').forEach(el => {
+      el.oninput = () => {
+        const i = parseInt(el.dataset.i), f = el.dataset.f;
+        if (f === 'quantity') lines[i][f] = parseInt(el.value) || 1;
+        else lines[i][f] = el.value;
+      };
+    });
+    tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      lines.splice(parseInt(b.dataset.del), 1);
+      if (lines.length === 0) lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+      drawLines();
+    });
+  }
+  drawLines();
+  modal.append(tbl);
+
+  modal.append(h('button',{className:'btn-outline btn-sm',style:'margin-top:8px',onclick:()=>{
+    lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+    drawLines();
+  }},'+ Add line'));
+
+  const btns = h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;border-top:1px solid var(--border);padding-top:12px'});
+  btns.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+  btns.append(h('button',{className:'btn',onclick:async()=>{
+    const valid = lines.filter(l => l.equipment_name || l.equipment_type);
+    if (valid.length === 0) return alert('At least one line is required.');
+    if (priorFilled > 0 && !confirm(`This clears ${priorFilled} tagged-out item${priorFilled===1?'':'s'}. Proceed?`)) return;
+    try {
+      await api('/equipment-tickets/' + detail.project.ticket_number + '/lines', {
+        method:'PATCH', body: JSON.stringify({ lines: valid }),
+      });
+      overlay.remove();
+      if (onSaved) onSaved();
+    } catch (e) { alert(e.message); }
+  }},'Save Lines'));
+  modal.append(btns);
+
+  overlay.append(modal); document.body.append(overlay);
 }
 
 async function renderEquipment(main) {
