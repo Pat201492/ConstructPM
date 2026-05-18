@@ -6104,14 +6104,64 @@ async function showEmailDayPickerPopup() {
   const listWrap = h('div',{style:'display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1;min-height:120px;margin-bottom:10px'});
   modal.append(listWrap);
 
-  const closeRow = h('div',{style:'display:flex;justify-content:flex-end;border-top:1px solid var(--border);padding-top:10px'});
-  closeRow.append(h('button',{className:'btn-outline btn-sm',onclick:()=>overlay.remove()},'Cancel'));
+  // Holds the most recent /scheduled-list result for the chosen date.
+  // The Send button fans out across every project in this list.
+  let loadedProjects = [];
+
+  const closeRow = h('div',{style:'display:flex;justify-content:space-between;align-items:center;gap:8px;border-top:1px solid var(--border);padding-top:10px'});
+  const sendStatus = h('span',{style:'font-size:11px;color:var(--text3)'}, '');
+  closeRow.append(sendStatus);
+  const btnRow = h('div',{style:'display:flex;gap:8px'});
+  btnRow.append(h('button',{className:'btn-outline btn-sm',onclick:()=>overlay.remove()},'Cancel'));
+  const sendBtn = h('button',{className:'btn btn-sm'}, 'Send');
+  sendBtn.onclick = async () => {
+    const forDate = dateInput.value;
+    if (loadedProjects.length === 0) { alert('No projects scheduled on this date.'); return; }
+    // Summarize staffing state for the bulk confirm: how many rows are
+    // un-staffed (red) and how many are partially staffed (yellow).
+    let unstaffed = 0, partial = 0;
+    loadedProjects.forEach(p => {
+      const fs = (p.fully_staffed_dates || []).includes(forDate);
+      if ((p._dayCrew || 0) === 0) unstaffed++;
+      else if (!fs) partial++;
+    });
+    let msg = `Email day to staff for ${loadedProjects.length} project${loadedProjects.length===1?'':'s'} on ${forDate}?`;
+    const warnBits = [];
+    if (unstaffed) warnBits.push(`${unstaffed} not staffed (no emails will be sent for those)`);
+    if (partial) warnBits.push(`${partial} not fully staffed by recommendation`);
+    if (warnBits.length) msg += `\n\nWarnings: ${warnBits.join('; ')}.`;
+    if (!confirm(msg)) return;
+
+    sendBtn.disabled = true;
+    sendStatus.textContent = 'Sending…';
+    let totalSent = 0, failed = 0;
+    await Promise.all(loadedProjects.map(async p => {
+      try {
+        const r = await api(`/projects/${p.id}/email-day`, {
+          method:'POST', body: JSON.stringify({ date: forDate }),
+        });
+        totalSent += (r.sent_to || 0);
+      } catch (err) {
+        failed++;
+        console.error('[email-day]', p.id, err.message);
+      }
+    }));
+    sendBtn.disabled = false;
+    sendStatus.textContent = '';
+    let result = `Sent to ${totalSent} worker${totalSent===1?'':'s'} across ${loadedProjects.length} project${loadedProjects.length===1?'':'s'}.`;
+    if (failed) result += ` ${failed} project${failed===1?'':'s'} failed — see console.`;
+    alert(result);
+    overlay.remove();
+  };
+  btnRow.append(sendBtn);
+  closeRow.append(btnRow);
   modal.append(closeRow);
   overlay.append(modal); document.body.append(overlay);
 
   async function loadProjects(forDate) {
     listWrap.innerHTML='';
     listWrap.append(h('div',{style:'color:var(--text2);padding:8px;font-size:13px'},'Loading…'));
+    loadedProjects = [];
     let projects = [];
     try {
       const r = await api(`/projects/scheduled-list?from=${forDate}&to=${forDate}`);
@@ -6136,30 +6186,44 @@ async function showEmailDayPickerPopup() {
         p._dayCrew = count;
       } catch { p._dayCrew = 0; }
     }));
+    loadedProjects = projects;
     projects.forEach(p => {
+      // Three staffing states drive the row warning:
+      //   red    — 0 workers assigned for this date
+      //   yellow — crew exists but PM hasn't marked the day fully_staffed
+      //   none   — fully_staffed_dates includes this date
+      const fsSet = new Set(p.fully_staffed_dates || []);
+      const isFullyStaffed = fsSet.has(forDate);
       const hasCrew = p._dayCrew > 0;
+      const warnLevel = !hasCrew ? 'red' : (!isFullyStaffed ? 'yellow' : null);
+      const warnColor = warnLevel === 'red' ? '#d94545' : warnLevel === 'yellow' ? '#d9a441' : null;
+      const warnLabel = warnLevel === 'red'
+        ? 'Not staffed for this day'
+        : warnLevel === 'yellow' ? 'Not fully staffed by recommendation' : '';
+
       const row = h('div',{
-        style:`padding:10px;background:var(--bg3);border-radius:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;${hasCrew?'cursor:pointer':'opacity:0.55'}`,
-        title: hasCrew ? '' : 'No workers assigned this day — assign a crew first',
+        style:`padding:10px;background:var(--bg3);border-radius:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;${warnColor?`border-left:3px solid ${warnColor};`:''}`,
       });
-      const left = h('div');
-      left.append(h('div',{style:'font-weight:600;font-size:13px'}, p.primary_number || p.name || 'Project'));
-      left.append(h('div',{style:'font-size:11px;color:var(--text2)'}, p.customer_name || '—'));
-      row.append(left);
-      row.append(h('span',{style:'font-size:12px;color:var(--text3);white-space:nowrap'},
-        `${p._dayCrew} worker${p._dayCrew===1?'':'s'}`));
-      if (hasCrew) {
-        row.onclick = async () => {
-          if (!confirm(`Email ${p._dayCrew} worker${p._dayCrew===1?'':'s'} on "${p.primary_number || p.name}" for ${forDate}?`)) return;
-          try {
-            const r = await api(`/projects/${p.id}/email-day`, {
-              method:'POST', body: JSON.stringify({ date: forDate }),
-            });
-            alert(`Sent to ${r.sent_to} worker${r.sent_to===1?'':'s'}.`);
-            overlay.remove();
-          } catch (err) { alert(err.message); }
-        };
+
+      const left = h('div',{style:'display:flex;align-items:center;gap:8px;min-width:0;flex:1'});
+      if (warnColor) {
+        left.append(h('span',{
+          style:`color:${warnColor};font-size:14px;line-height:1;flex-shrink:0`,
+          title: warnLabel,
+        }, '⚠'));
       }
+      const labelCol = h('div',{style:'min-width:0'});
+      labelCol.append(h('div',{style:'font-weight:600;font-size:13px'}, p.primary_number || p.name || 'Project'));
+      labelCol.append(h('div',{style:'font-size:11px;color:var(--text2)'}, p.customer_name || '—'));
+      if (warnLabel) {
+        labelCol.append(h('div',{style:`font-size:11px;color:${warnColor};margin-top:2px`}, warnLabel));
+      }
+      left.append(labelCol);
+      row.append(left);
+
+      row.append(h('span',{style:'font-size:12px;color:var(--text3);white-space:nowrap;flex-shrink:0'},
+        `${p._dayCrew} worker${p._dayCrew===1?'':'s'}`));
+
       listWrap.append(row);
     });
   }
