@@ -24,7 +24,6 @@ const inventoryRoutes = require('./routes/inventory');
 const exportRoutes = require('./routes/exports');
 const savedExportRoutes = require('./routes/savedExports');
 const emailTemplateRoutes = require('./routes/emailTemplates');
-const projectDailyEmailRoutes = require('./routes/projectDailyEmail');
 const adminRoutes = require('./routes/admin');
 const inboxRoutes = require('./routes/inbox');
 const equipmentRoutes = require('./routes/equipment');
@@ -76,10 +75,6 @@ app.use('/api/purchase-orders', purchaseOrderRoutes);
 
 // Bids & Projects
 app.use('/api/bids', bidRoutes);
-// Per-project daily-briefing config mounts FIRST so its sub-prefix
-// resolves before the broader `/api/projects` router (same pattern as
-// /api/exports/schedules vs /api/exports).
-app.use('/api/projects/:projectId/daily-email', projectDailyEmailRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/scheduler', schedulerRoutes);
 
