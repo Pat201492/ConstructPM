@@ -5290,24 +5290,21 @@ async function showScheduleEditPopup(projectId, onSaved) {
 
   const wdLabel = h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:8px'},'Working days (default Mon-Fri)');
   modal.append(wdLabel);
-  const wdRow = h('div',{style:'display:flex;gap:14px;margin-top:4px;align-items:center'});
-  const satCb = h('input',{type:'checkbox',id:'sch-sat'}); satCb.checked = !!schedule.works_saturday;
-  const sunCb = h('input',{type:'checkbox',id:'sch-sun'}); sunCb.checked = !!schedule.works_sunday;
-  const satLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ satCb, h('span',{},'Saturday') ]);
-  const sunLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ sunCb, h('span',{},'Sunday') ]);
-  wdRow.append(satLabel);
-  wdRow.append(sunLabel);
-  modal.append(wdRow);
-
   // Weekend-only mode: schedules on Sat + Sun only and skips Mon-Fri.
   // When on, the Sat/Sun checkboxes are irrelevant (both days work) and
   // are visually dimmed; their stored values are preserved so toggling
   // weekend-only off restores the user's prior preferences.
-  const weLabel = h('label',{style:'display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer'});
-  const weCb = h('input',{type:'checkbox',id:'sch-weekend-only'}); weCb.checked = !!schedule.weekend_only;
-  weLabel.append(weCb);
-  weLabel.append(h('span',{},'Weekend only (Sat + Sun, skip Mon-Fri)'));
-  modal.append(weLabel);
+  const wdRow = h('div',{style:'display:flex;gap:14px;margin-top:4px;align-items:center'});
+  const satCb = h('input',{type:'checkbox',id:'sch-sat'}); satCb.checked = !!schedule.works_saturday;
+  const sunCb = h('input',{type:'checkbox',id:'sch-sun'}); sunCb.checked = !!schedule.works_sunday;
+  const weCb  = h('input',{type:'checkbox',id:'sch-weekend-only'}); weCb.checked = !!schedule.weekend_only;
+  const satLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ satCb, h('span',{},'Saturday') ]);
+  const sunLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ sunCb, h('span',{},'Sunday') ]);
+  const weLabel  = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ weCb,  h('span',{},'Weekend Only') ]);
+  wdRow.append(satLabel);
+  wdRow.append(sunLabel);
+  wdRow.append(weLabel);
+  modal.append(wdRow);
   function syncWeekendOnlyUi() {
     const on = weCb.checked;
     satCb.disabled = on;
