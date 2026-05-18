@@ -5164,9 +5164,11 @@ async function renderSchedule(main) {
     let safety = 0;
     while (set.size < length && safety < length * 10 + 7) {
       const dow = d.getDay(); // 0=Sun..6=Sat
-      const isWorking = (dow >= 1 && dow <= 5)
-        || (dow === 0 && !!p.works_sunday)
-        || (dow === 6 && !!p.works_saturday);
+      const isWorking = p.weekend_only
+        ? (dow === 0 || dow === 6)
+        : (dow >= 1 && dow <= 5)
+          || (dow === 0 && !!p.works_sunday)
+          || (dow === 6 && !!p.works_saturday);
       if (isWorking) {
         set.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
       }
@@ -5232,7 +5234,7 @@ async function renderSchedule(main) {
 
   // Legend / hint
   main.append(h('p',{style:'color:var(--text2);font-size:12px;margin-top:12px'},
-    'Click any project card to edit start date, working days (Sat / Sun), and review the schedule. Default working days are Mon-Fri.'));
+    'Click any project card to edit start date, working days (Sat / Sun, or Weekend only), and review the schedule. Default working days are Mon-Fri.'));
 
   // Auto-open edit pop-up if URL has ?edit=<projectId> (notification deep link)
   // S.params is populated by the router; we also accept the legacy hash form
@@ -5288,12 +5290,33 @@ async function showScheduleEditPopup(projectId, onSaved) {
 
   const wdLabel = h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:8px'},'Working days (default Mon-Fri)');
   modal.append(wdLabel);
-  const wdRow = h('div',{style:'display:flex;gap:14px;margin-top:4px'});
+  const wdRow = h('div',{style:'display:flex;gap:14px;margin-top:4px;align-items:center'});
   const satCb = h('input',{type:'checkbox',id:'sch-sat'}); satCb.checked = !!schedule.works_saturday;
   const sunCb = h('input',{type:'checkbox',id:'sch-sun'}); sunCb.checked = !!schedule.works_sunday;
-  wdRow.append(h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ satCb, h('span',{},'Saturday') ]));
-  wdRow.append(h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ sunCb, h('span',{},'Sunday') ]));
+  const satLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ satCb, h('span',{},'Saturday') ]);
+  const sunLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ sunCb, h('span',{},'Sunday') ]);
+  wdRow.append(satLabel);
+  wdRow.append(sunLabel);
   modal.append(wdRow);
+
+  // Weekend-only mode: schedules on Sat + Sun only and skips Mon-Fri.
+  // When on, the Sat/Sun checkboxes are irrelevant (both days work) and
+  // are visually dimmed; their stored values are preserved so toggling
+  // weekend-only off restores the user's prior preferences.
+  const weLabel = h('label',{style:'display:flex;align-items:center;gap:6px;margin-top:10px;cursor:pointer'});
+  const weCb = h('input',{type:'checkbox',id:'sch-weekend-only'}); weCb.checked = !!schedule.weekend_only;
+  weLabel.append(weCb);
+  weLabel.append(h('span',{},'Weekend only (Sat + Sun, skip Mon-Fri)'));
+  modal.append(weLabel);
+  function syncWeekendOnlyUi() {
+    const on = weCb.checked;
+    satCb.disabled = on;
+    sunCb.disabled = on;
+    satLabel.style.opacity = on ? '0.45' : '1';
+    sunLabel.style.opacity = on ? '0.45' : '1';
+  }
+  weCb.addEventListener('change', syncWeekendOnlyUi);
+  syncWeekendOnlyUi();
 
   // Day Notes — per-(project, start-date) note. This is the crew-facing
   // channel (the same notes the Email Day to Staff button sends), NOT
@@ -5340,6 +5363,7 @@ async function showScheduleEditPopup(projectId, onSaved) {
         body: JSON.stringify({
           works_saturday: $('#sch-sat').checked,
           works_sunday: $('#sch-sun').checked,
+          weekend_only: $('#sch-weekend-only').checked,
         }),
       });
       // Save the day note against the effective start date (the new one
@@ -5540,9 +5564,11 @@ async function renderScheduler(main) {
     let safety = 0;
     while (set.size < length && safety < length * 10 + 7) {
       const dow = d.getDay();
-      const isWorking = (dow >= 1 && dow <= 5)
-        || (dow === 0 && !!p.works_sunday)
-        || (dow === 6 && !!p.works_saturday);
+      const isWorking = p.weekend_only
+        ? (dow === 0 || dow === 6)
+        : (dow >= 1 && dow <= 5)
+          || (dow === 0 && !!p.works_sunday)
+          || (dow === 6 && !!p.works_saturday);
       if (isWorking) set.add(dateKey(d));
       d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
       safety++;
