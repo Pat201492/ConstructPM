@@ -5,7 +5,11 @@ on:
     types: [opened, reopened, synchronize]
 
 permissions:
-  contents: read
+  # `contents: write` lets the bot commit + push fixes back to the PR
+  # branch. Combined with the `if:` guard below this is safe in the
+  # current single-author setup; revisit if external contributors ever
+  # open PRs from forks (the guard will block them outright).
+  contents: write
   pull-requests: write
   issues: write
   id-token: write
@@ -14,25 +18,38 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Belt-and-suspenders: a `contents: write` workflow that runs on
+    # `pull_request` could be hijacked by a malicious fork PR to push
+    # arbitrary code. We only run when the head and base are the same
+    # repo — i.e. an internal branch, never a fork. If a fork PR ever
+    # shows up the workflow just skips.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
     steps:
-      - name: Checkout
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
+          # Check out the actual PR branch (not the merge ref) so we
+          # can push commits back. `ref: head_ref` is what enables the
+          # final push step to land on the PR.
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
+          # Persist the default GITHUB_TOKEN so subsequent git push uses it.
+          persist-credentials: true
 
       - name: Claude Code Review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--model claude-opus-4-7 --max-turns 40'
+          claude_args: '--model claude-opus-4-7 --max-turns 60'
           prompt: |
-            Perform a deep, thorough code review of this pull request. Take your time. Think hard.
+            You are reviewing a pull request **and applying the fixes you find** rather than just commenting. Take your time. Think hard.
 
             ## Process
-            1. Read the full PR diff to understand the scope of changes.
-            2. For each modified file, read the surrounding code — not just the diff lines — to understand context.
-            3. Identify other files/modules in the repo that depend on the changed code, and read those too.
-            4. Examine test coverage: are new tests added? do existing tests actually exercise the new behavior? are edge cases covered?
+            1. Read the full PR diff to understand the scope.
+            2. For each modified file, read the surrounding code — not just the diff lines.
+            3. Identify other files/modules that depend on the changed code, and read those too.
+            4. Examine test coverage: are new tests added? do they exercise the new behavior? are edge cases covered?
             5. Consider runtime behavior under load and failure modes, not just static correctness.
 
             ## Focus areas — be thorough on each
@@ -47,20 +64,50 @@ jobs:
             - **Observability**: missing logs/metrics on new code paths, log levels, sensitive data leaking into logs
             - **Error handling**: silently swallowed exceptions, missing rollbacks, partial-failure recovery
 
-            ## Output format
-            Post a single PR comment structured exactly as below. Every issue must cite a file path and line number, and propose a specific concrete fix where possible. Don't invent issues to pad sections — if a section is empty, write "None."
+            ## Output rules — read carefully
 
-            ## Summary
-            One paragraph: what this PR does and your overall verdict — **ship it** / **needs changes** / **blocker**.
+            For every issue you find, decide between two paths:
 
-            ## Blockers
-            Issues that should prevent merge. Each: `path/to/file.ext:LINE` — description — suggested fix.
+            ### Path A: Apply the fix directly (preferred when safe)
+            Use the Edit / Write tools to fix the code in place. The workflow will commit and push everything you change after you finish. Suitable for:
+            - Concrete bugs with an obviously correct fix (null-check, typo, off-by-one, missing await)
+            - Mechanical refactors (renames, dead-code removal, deduping a helper)
+            - Adding missing tests for newly-added logic where the expected behavior is unambiguous
+            - Tightening validation, escaping, or auth checks where the safe behavior is unambiguous
 
-            ## Recommended changes
-            Important but not blocking. Same format.
+            ### Path B: Leave a buffered inline comment instead of fixing
+            Use the inline-comment mechanism for issues where editing would be presumptuous or risky:
+            - Architectural / design questions (e.g. "should this be a queue instead of a tick?")
+            - Breaking changes that need the author's call
+            - Anything where the right fix depends on intent you can't infer
+            - Style/clarity nits that aren't worth a commit
 
-            ## Nitpicks
-            Small style/clarity issues. Keep this section short. Skip if none.
+            ## When you finish
+            - Do not write a top-level summary comment. The commit message and the inline comments together are the review.
+            - If you applied fixes, write a concise commit-message-style summary as your final text output. The push step will use it as the commit body.
+            - If you found nothing actionable, that's fine — make no edits, leave no comments, and output "No changes needed." as your final text.
 
-            ## What you got right
-            One or two specific things done well. Keep brief — this signals you actually read the code.
+            Do not run tests, install dependencies, or push commits yourself — leave that to the workflow's later steps.
+
+      - name: Commit and push fixes (if any)
+        run: |
+          set -e
+          # If Claude didn't touch anything, exit quietly.
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "[review-workflow] No changes from Claude; nothing to push."
+            exit 0
+          fi
+
+          git config user.name  "claude-review-bot[bot]"
+          git config user.email "claude-review-bot[bot]@users.noreply.github.com"
+          git add -A
+
+          # Use a stable subject so subsequent automated commits don't
+          # confuse `git log --grep`. Body intentionally short — the
+          # actual diff is the review.
+          git commit -m "Address PR review (automated)" \
+            -m "Generated by the Claude PR Review workflow. See the inline comments on this PR for issues that were not auto-fixed." \
+            -m "Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+
+          git push origin HEAD:"${{ github.head_ref }}"
+          echo "[review-workflow] Pushed bot fixes to ${{ github.head_ref }}."
