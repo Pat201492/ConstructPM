@@ -37,6 +37,13 @@ const ProjectBriefingRunner = {
       const config = await db('project_daily_email_configs').where('project_id', projectId).first();
       if (!config) throw new Error(`No daily-email config for project: ${projectId}`);
 
+      // Stamp 'running' upfront so the FileWatcher's "hasn't run today"
+      // idempotency check trips on the next tick even if we crash mid-send.
+      // Trade-off: a crash mid-send means recipients past the crash point
+      // miss out for the day. Acceptable vs. the alternative of duplicate
+      // sends on every restart.
+      await stamp(config.id, 'running', null);
+
       // 1. Resolve recipients
       const userIds = await resolveRecipientIds(project, config);
       if (userIds.size === 0) {
@@ -123,7 +130,18 @@ async function resolveRecipientIds(project, config) {
   if (config.include_pm && project.pm_id) set.add(project.pm_id);
 
   if (config.include_scheduler) {
-    const schedulers = await db('users').where({ role: 'scheduler', active: true }).pluck('id');
+    // Scoped to schedulers ASSIGNED to this project. Previously this
+    // pulled every active user with role='scheduler' org-wide, so for
+    // any org with more than one scheduler the daily briefing fanned
+    // out to all of them on every project. Per-project scoping via
+    // project_assignments keeps the toggle meaningful and avoids the
+    // accidental org-wide blast.
+    const schedulers = await db('users')
+      .join('project_assignments', 'project_assignments.user_id', 'users.id')
+      .where('users.role', 'scheduler')
+      .where('users.active', true)
+      .where('project_assignments.project_id', project.id)
+      .pluck('users.id');
     schedulers.forEach(id => set.add(id));
   }
 

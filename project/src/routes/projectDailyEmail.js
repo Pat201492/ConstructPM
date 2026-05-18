@@ -21,6 +21,8 @@ const ProjectBriefingRunner = require('../services/ProjectBriefingRunner');
 const router = express.Router({ mergeParams: true });
 router.use(authenticate);
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const DEFAULTS = {
   enabled: false,
   send_hour_utc: 13,
@@ -79,8 +81,18 @@ router.put('/', async (req, res, next) => {
     for (const k of allowed) {
       if (req.body[k] === undefined) continue;
       if (k === 'extra_recipient_user_ids') {
-        if (!Array.isArray(req.body[k])) errors.push('extra_recipient_user_ids must be an array');
-        else update[k] = JSON.stringify(req.body[k]);
+        if (!Array.isArray(req.body[k])) {
+          errors.push('extra_recipient_user_ids must be an array');
+        } else {
+          // Each entry must be a UUID — garbage IDs would silently fall
+          // out of whereIn at send time, so reject at the boundary instead.
+          const bad = [];
+          req.body[k].forEach((v, i) => {
+            if (typeof v !== 'string' || !UUID_RE.test(v)) bad.push(`[${i}]=${JSON.stringify(v)}`);
+          });
+          if (bad.length > 0) errors.push(`extra_recipient_user_ids entries must be UUIDs: ${bad.join(', ')}`);
+          else update[k] = JSON.stringify(req.body[k]);
+        }
       } else if (k === 'send_hour_utc') {
         const n = Number(req.body[k]);
         if (!Number.isInteger(n) || n < 0 || n > 23) errors.push('send_hour_utc must be an integer 0–23');

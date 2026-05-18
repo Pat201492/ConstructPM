@@ -38,6 +38,14 @@ const SavedExportRunner = {
     let tmpPath = null;
 
     try {
+      // Stamp 'running' upfront so retries after a crash mid-send don't
+      // double-deliver. FileWatcher's saved-export tick advances
+      // next_run_at after each fire regardless of outcome, so the upfront
+      // stamp is mostly for UI hygiene — the row reflects "currently
+      // running" while ExportBuilder/emailing is in flight, instead of
+      // staying on the previous status until the end.
+      await this._stamp(savedExport.id, 'running', null);
+
       // 1+2. Run the export and build CSV
       const columns = normalizeJsonArray(savedExport.columns);
       const filters = normalizeJsonObject(savedExport.filters);

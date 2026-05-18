@@ -80,14 +80,19 @@ const EmailTemplateService = {
    * Render a template by key. Returns { subject, html, text, unresolved[] }.
    * Throws if the template doesn't exist (callers shouldn't render against
    * a missing template — that's a bug, not a recoverable state).
+   *
+   * `subject` is rendered WITHOUT HTML-escape — it lands in the Subject:
+   * header, not the body, and HTML entities are literal there ("Acme & Co"
+   * must come through as "Acme & Co", not "Acme &amp; Co"). `body_html`
+   * and `body_text` are rendered with the default escape behaviour.
    */
   async render(key, vars = {}) {
     const tpl = await this.get(key);
     if (!tpl) throw new Error(`Email template not found: ${key}`);
     const unresolved = new Set();
-    const subject = renderString(tpl.subject || '', vars, unresolved);
+    const subject = renderString(tpl.subject || '', vars, unresolved, { escape: false });
     const html = renderString(tpl.body_html || '', vars, unresolved);
-    const text = tpl.body_text ? renderString(tpl.body_text, vars, unresolved) : null;
+    const text = tpl.body_text ? renderString(tpl.body_text, vars, unresolved, { escape: false }) : null;
     return { subject, html, text, unresolved: [...unresolved] };
   },
 
@@ -110,18 +115,24 @@ const EmailTemplateService = {
 
 // ─── helpers ──────────────────────────────────────────────────────────
 
-function renderString(input, vars, unresolved) {
+// Single-pass alternation so a raw `{{{var}}}` whose VALUE happens to
+// contain a `{{...}}` substring isn't re-substituted by a second pass.
+// The triple branch is listed first; on overlap, JS regex engines pick
+// the longer match, which is the triple. The double branch only fires
+// on text that didn't match the triple.
+const MUSTACHE_RE = /\{\{\{\s*([a-zA-Z_][\w]*)\s*\}\}\}|\{\{\s*([a-zA-Z_][\w]*)\s*\}\}/g;
+
+function renderString(input, vars, unresolved, opts = {}) {
   if (typeof input !== 'string' || input.length === 0) return '';
-  // Triple-mustache first (raw), then double-mustache (escaped).
-  let out = input.replace(/\{\{\{\s*([a-zA-Z_][\w]*)\s*\}\}\}/g, (_m, name) => {
-    if (vars[name] === undefined || vars[name] === null) { unresolved.add(name); return ''; }
-    return String(vars[name]);
+  const escape = opts.escape !== false; // default: escape
+  return input.replace(MUSTACHE_RE, (_m, rawName, escName) => {
+    const name = rawName || escName;
+    const isRaw = !!rawName;
+    const val = vars[name];
+    if (val === undefined || val === null) { unresolved.add(name); return ''; }
+    const s = String(val);
+    return (isRaw || !escape) ? s : escapeHtml(s);
   });
-  out = out.replace(/\{\{\s*([a-zA-Z_][\w]*)\s*\}\}/g, (_m, name) => {
-    if (vars[name] === undefined || vars[name] === null) { unresolved.add(name); return ''; }
-    return escapeHtml(String(vars[name]));
-  });
-  return out;
 }
 
 function escapeHtml(s) {
@@ -134,3 +145,9 @@ function escapeHtml(s) {
 }
 
 module.exports = EmailTemplateService;
+// Exposed for unit testing — renderString is the core escape + substitution
+// helper and the location of the bugs the v0 implementation shipped with
+// (subject double-escape, triple-mustache double-substitution). Keep the
+// underscore prefix so it's clear this isn't a stable public API.
+module.exports._renderString = renderString;
+module.exports._escapeHtml = escapeHtml;
