@@ -306,6 +306,7 @@ router.get('/scheduled-list', authorize('projects:read'), async (req, res, next)
         'customers.name as customer_name',
         'project_schedule_overrides.works_saturday',
         'project_schedule_overrides.works_sunday',
+        'project_schedule_overrides.weekend_only',
         db.raw("users.first_name || ' ' || users.last_name as pm_name"),
       )
       .leftJoin(primarySub, 'projects.id', 'pn.project_id')
@@ -661,6 +662,7 @@ router.get('/:id/schedule', authorize('projects:read'), async (req, res, next) =
       project_id: req.params.id,
       works_saturday: overrides?.works_saturday || false,
       works_sunday: overrides?.works_sunday || false,
+      weekend_only: overrides?.weekend_only || false,
     });
   } catch (err) { next(err); }
 });
@@ -676,20 +678,21 @@ router.patch('/:id/schedule', authorize('projects:update'), async (req, res, nex
 
     const works_saturday = !!req.body.works_saturday;
     const works_sunday = !!req.body.works_sunday;
+    const weekend_only = !!req.body.weekend_only;
 
     // Upsert into project_schedule_overrides
     const existing = await db('project_schedule_overrides').where('project_id', req.params.id).first();
     if (existing) {
       await db('project_schedule_overrides')
         .where('project_id', req.params.id)
-        .update({ works_saturday, works_sunday, updated_at: db.fn.now() });
+        .update({ works_saturday, works_sunday, weekend_only, updated_at: db.fn.now() });
     } else {
       await db('project_schedule_overrides').insert({
-        project_id: req.params.id, works_saturday, works_sunday,
+        project_id: req.params.id, works_saturday, works_sunday, weekend_only,
       });
     }
 
-    res.json({ project_id: req.params.id, works_saturday, works_sunday });
+    res.json({ project_id: req.params.id, works_saturday, works_sunday, weekend_only });
   } catch (err) { next(err); }
 });
 
