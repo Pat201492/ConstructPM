@@ -4158,11 +4158,13 @@ async function etRequest(c){
   c.append(addBtn);
 
   const submit=h('button',{className:'btn',style:'margin-top:16px;display:block',onclick:async()=>{
+    const projId = $('#etr-project').value;
+    if (!projId) return alert('Pick a project before submitting the ticket.');
     const valid=lines.filter(l=>l.equipment_name||l.equipment_type);
     if(valid.length===0) return alert('Add at least one equipment line.');
     try {
       const r=await api('/equipment-tickets',{method:'POST',body:JSON.stringify({
-        project_id:$('#etr-project').value||null,
+        project_id: projId,
         pickup_person:$('#etr-pickup').value,
         requestor_name:$('#etr-requestor').value,
         location_name:$('#etr-locname').value,

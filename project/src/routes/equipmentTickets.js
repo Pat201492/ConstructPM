@@ -82,6 +82,11 @@ router.post('/', authorize('equipment:read'), async (req, res, next) => {
     if (!Array.isArray(b.lines) || b.lines.length === 0) {
       return res.status(400).json({ error: 'At least one equipment line is required' });
     }
+    // Pat's rule: every ticket must be tied to a project so the pickup-
+    // time location flip + project_number stamp have a real target.
+    if (!b.project_id) {
+      return res.status(400).json({ error: 'A project is required for every ticket' });
+    }
 
     // Resolve project info. If a project_id is given, pull its number +
     // location + SITE contact (Pat: tickets use the SITE contact, not
