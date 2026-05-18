@@ -4248,7 +4248,7 @@ async function etMaintenance(c){
         String(e.service_date||'—').slice(0,10),
         h('span',{style:certColor(e.rolled_cert_date||e.certification_date)?`color:${certColor(e.rolled_cert_date||e.certification_date)};font-weight:600`:''},String(e.rolled_cert_date||e.certification_date||'—').slice(0,10)),
         flagDot,
-        h('button',{className:'btn-outline btn-sm',onclick:()=>showMaintRecords(e)},'Records'),
+        h('button',{className:'btn-outline btn-sm',onclick:()=>showMaintRecords(e, () => etMaintenance(c))},'Records'),
       ];
     })));
   }
@@ -4256,7 +4256,7 @@ async function etMaintenance(c){
   draw();
 }
 
-async function showMaintRecords(equip){
+async function showMaintRecords(equip, onSaved){
   const overlay=h('div',{className:'modal-overlay'});
   const modal=h('div',{className:'modal',style:'max-width:640px'});
   modal.append(h('p',{},'Loading…'));
@@ -4264,6 +4264,10 @@ async function showMaintRecords(equip){
   let data;
   try { data=await api('/equipment/'+equip.id+'/maintenance-records'); }
   catch(e){ modal.innerHTML=''; modal.append(h('p',{style:'color:var(--red)'},e.message)); return; }
+  // Refresh equip's rolled_cert_date from the latest server state so the
+  // header doesn't show a stale date after an add. The maintenance-records
+  // GET returns the equipment block alongside the records list.
+  if (data.equipment) equip = { ...equip, ...data.equipment };
 
   modal.innerHTML='';
   modal.append(h('h2',{},`${equip.barcode_id} — Maintenance Record`));
@@ -4295,7 +4299,12 @@ async function showMaintRecords(equip){
         notes:$('#mr-notes').value,
         flag:$('#mr-flag').value||null,
       })});
-      overlay.remove(); showMaintRecords(equip);
+      // Re-render the maintenance table behind the modal so the cert
+      // color band updates without a manual page refresh — was the bug
+      // Pat hit where the green/yellow/red dot lagged the data.
+      if (onSaved) onSaved();
+      overlay.remove();
+      showMaintRecords(equip, onSaved);
     } catch(e){ alert(e.message); }
   }},'Add Entry'));
   modal.append(addBox);
@@ -4312,7 +4321,10 @@ async function showMaintRecords(equip){
     ])));
   }
   const close=h('div',{style:'display:flex;justify-content:flex-end;margin-top:14px'});
-  close.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Close'));
+  close.append(h('button',{className:'btn-outline',onclick:()=>{
+    overlay.remove();
+    if (onSaved) onSaved();
+  }},'Close'));
   modal.append(close);
 }
 
