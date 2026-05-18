@@ -27,6 +27,44 @@ const db = require('../config/database');
 const router = express.Router();
 router.use(authenticate);
 
+// Equipment-status state machine glue. When items move on or off a
+// ticket's filled list, flip equipment.status so the master list and
+// the in-shop picker reflect reservation:
+//   available  ─(scan/add to ticket)→  on_ticket
+//   on_ticket  ─(remove from ticket)→  available
+//   on_ticket  ─(ticket picked up)→    checked_out   (handled by /pickup)
+// Pass arrays of barcode_id strings. UUIDs are tolerated but matched
+// only when they look like UUIDs (same defensive guard as /pickup).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function syncTicketStatus({ addedIds, removedIds, trx }) {
+  const knex = trx || db;
+  const flip = async (ids, toStatus, fromStatuses) => {
+    for (const raw of ids) {
+      const num = String(raw || '').trim();
+      if (!num) continue;
+      await knex('equipment')
+        .where(function () {
+          this.where('barcode_id', num);
+          if (UUID_RE.test(num)) this.orWhere('id', num);
+        })
+        .whereIn('status', fromStatuses)
+        .update({ status: toStatus, status_change_date: knex.fn.now(), updated_at: knex.fn.now() });
+    }
+  };
+  if (addedIds && addedIds.length) {
+    // Only flip when it was sitting available — don't pull stock out
+    // of maintenance_required / retired by surprise. checked_out items
+    // also stay put; a separate /return path moves them back.
+    await flip(addedIds, 'on_ticket', ['available']);
+  }
+  if (removedIds && removedIds.length) {
+    // Reverse: only items still in on_ticket flip back to available.
+    // If somebody picked it up between the add and the remove, leave
+    // it as checked_out.
+    await flip(removedIds, 'available', ['on_ticket']);
+  }
+}
+
 // ── Next ticket number (atomic-ish; single-process app) ──────────
 async function nextTicketNumber(trx) {
   const q = trx || db;
@@ -208,17 +246,34 @@ router.post('/:ticketNumber/fill', authorize('equipment:read'), async (req, res,
     if (!project) return res.status(404).json({ error: 'Ticket not found' });
 
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    // Store the scanned list on the first line row's filled_items (the
-    // board reads it from there to show "what was actually pulled").
+    const newIds = items.map(i => String(i.equipment_number || i.barcode_id || '').trim()).filter(Boolean);
+
+    // Read the prior list so we can diff and flip equipment.status only
+    // for entries that actually changed (add or remove).
     const firstLine = await db('ticket_equipment').where('ticket_number', tn).first();
+    let priorIds = [];
+    if (firstLine?.filled_items) {
+      try {
+        const arr = typeof firstLine.filled_items === 'string'
+          ? JSON.parse(firstLine.filled_items) : firstLine.filled_items;
+        priorIds = (arr || []).map(i => String(i.equipment_number || i.barcode_id || '').trim()).filter(Boolean);
+      } catch {}
+    }
+    const newSet = new Set(newIds.map(s => s.toLowerCase()));
+    const priorSet = new Set(priorIds.map(s => s.toLowerCase()));
+    const addedIds = newIds.filter(s => !priorSet.has(s.toLowerCase()));
+    const removedIds = priorIds.filter(s => !newSet.has(s.toLowerCase()));
+
     if (firstLine) {
       await db('ticket_equipment').where('id', firstLine.id)
         .update({ filled_items: JSON.stringify(items), updated_at: db.fn.now() });
     }
     await db('ticket_project').where('ticket_number', tn)
-      .update({ status: 'filled', updated_at: db.fn.now() });
+      .update({ status: items.length > 0 ? 'filled' : 'open', updated_at: db.fn.now() });
 
-    res.json({ ok: true, ticket_number: tn, filled: items.length });
+    await syncTicketStatus({ addedIds, removedIds });
+
+    res.json({ ok: true, ticket_number: tn, filled: items.length, added: addedIds.length, removed: removedIds.length });
   } catch (err) { next(err); }
 });
 
@@ -230,6 +285,19 @@ router.patch('/:ticketNumber/lines', authorize('equipment:read'), async (req, re
     if (!project) return res.status(404).json({ error: 'Ticket not found' });
     const lines = Array.isArray(req.body?.lines) ? req.body.lines : null;
     if (!lines) return res.status(400).json({ error: 'lines array required' });
+
+    // Edits reset filled_items to []. Capture the prior filled list so
+    // any equipment we had reserved (status='on_ticket') flips back to
+    // available before the row is rewritten.
+    const priorFirstLine = await db('ticket_equipment').where('ticket_number', tn).first();
+    let priorIds = [];
+    if (priorFirstLine?.filled_items) {
+      try {
+        const arr = typeof priorFirstLine.filled_items === 'string'
+          ? JSON.parse(priorFirstLine.filled_items) : priorFirstLine.filled_items;
+        priorIds = (arr || []).map(i => String(i.equipment_number || i.barcode_id || '').trim()).filter(Boolean);
+      } catch {}
+    }
 
     await db.transaction(async (trx) => {
       await trx('ticket_equipment').where('ticket_number', tn).del();
@@ -247,6 +315,9 @@ router.patch('/:ticketNumber/lines', authorize('equipment:read'), async (req, re
       // Any edit un-fills the ticket — must be re-confirmed/picked.
       await trx('ticket_project').where('ticket_number', tn)
         .update({ status: 'open', updated_at: trx.fn.now() });
+      if (priorIds.length) {
+        await syncTicketStatus({ removedIds: priorIds, trx });
+      }
     });
     res.json({ ok: true });
   } catch (err) { next(err); }

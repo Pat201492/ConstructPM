@@ -4362,6 +4362,37 @@ async function etActiveTickets(c){
       `${data.count} Active`));
     c.append(hdr);
 
+    // Return / scan-back-in panel — covers the case where equipment
+    // comes back from a job and the shop needs to put it back in
+    // circulation without going through the mobile app. Flips status
+    // to 'available' + clears current_project_id via /mobile/return.
+    const scanBack = h('div',{style:'background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap'});
+    scanBack.append(h('strong',{style:'font-size:13px'},'Return Equipment'));
+    scanBack.append(h('span',{style:'color:var(--text2);font-size:12px;flex:1;min-width:200px'},
+      'Scan or type a barcode to return a piece of equipment to the shop.'));
+    const rbInput = h('input',{placeholder:'Barcode / equipment ID', style:'width:200px'});
+    const rbStatus = h('span',{style:'font-size:12px;color:var(--text2);min-width:160px'});
+    const rbBtn = h('button',{className:'btn-outline btn-sm',onclick:async()=>{
+      const code = rbInput.value.trim();
+      if (!code) return;
+      rbBtn.disabled = true; rbStatus.textContent = 'Returning…';
+      try {
+        const r = await api('/equipment/mobile/return',{method:'POST',
+          body: JSON.stringify({ barcode_id: code })});
+        rbInput.value = '';
+        rbStatus.textContent = `✓ ${r.barcode_id} → shop`;
+        rbStatus.style.color = 'var(--green)';
+        setTimeout(() => { rbStatus.textContent = ''; rbStatus.style.color = 'var(--text2)'; }, 3000);
+      } catch (e) {
+        rbStatus.textContent = e.message;
+        rbStatus.style.color = 'var(--red)';
+      }
+      rbBtn.disabled = false;
+    }},'Return');
+    rbInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); rbBtn.click(); } });
+    scanBack.append(rbInput); scanBack.append(rbBtn); scanBack.append(rbStatus);
+    c.append(scanBack);
+
     if(data.tickets.length===0){
       c.append(h('p',{style:'color:var(--text2);font-style:italic'},'No active tickets.'));
       return;

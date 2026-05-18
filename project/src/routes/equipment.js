@@ -191,13 +191,18 @@ router.post('/mobile/return', authorize('equipment:read'), async (req, res, next
     const item = await Equipment.findByBarcode(code);
     if (!item) return res.status(404).json({ error: 'Equipment not found for this barcode' });
     const today = new Date().toISOString().slice(0, 10);
+    // Also flip status back to 'available' so the master list shows
+    // the piece as in-shop and the in-shop picker can offer it again.
+    // The previous version only updated location, leaving status as
+    // 'checked_out' indefinitely after a return scan.
     await db('equipment').where('id', item.id).update({
+      status: 'available',
       current_location: 'shop',
       current_project_id: null,
       status_change_date: today,
       updated_at: db.fn.now(),
     });
-    res.json({ ok: true, barcode_id: code, location: 'shop', status_change_date: today });
+    res.json({ ok: true, barcode_id: code, status: 'available', location: 'shop', status_change_date: today });
   } catch (err) { next(err); }
 });
 
