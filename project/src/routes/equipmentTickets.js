@@ -235,10 +235,13 @@ router.get('/:ticketNumber', authorize('equipment:read'), async (req, res, next)
 // ═══════════════════════════════════════════════════════════
 //
 // Body: { items: [{ equipment_number, equipment_name }] }
-// Appends to the ticket's filled list (shown at card bottom) and marks
-// the ticket 'filled'. PDF generation happens on pickup; mobile "mark
-// filled" simply flips status (the PDF is regenerated on pickup which
-// is the authoritative event).
+// Appends to the ticket's filled list (shown at card bottom). Does NOT
+// flip the ticket status — shop staff scan whatever pieces are actually
+// available (which may not match what the PM requested) and then press
+// "Ready for Pickup" as an explicit action. That separate endpoint is
+// what records the trigger_event the email pipeline keys off of.
+// Equipment.status still flips to 'on_ticket' on add so the in-shop
+// picker doesn't double-list anything.
 router.post('/:ticketNumber/fill', authorize('equipment:read'), async (req, res, next) => {
   try {
     const tn = parseInt(req.params.ticketNumber, 10);
@@ -268,12 +271,44 @@ router.post('/:ticketNumber/fill', authorize('equipment:read'), async (req, res,
       await db('ticket_equipment').where('id', firstLine.id)
         .update({ filled_items: JSON.stringify(items), updated_at: db.fn.now() });
     }
-    await db('ticket_project').where('ticket_number', tn)
-      .update({ status: items.length > 0 ? 'filled' : 'open', updated_at: db.fn.now() });
 
     await syncTicketStatus({ addedIds, removedIds });
 
     res.json({ ok: true, ticket_number: tn, filled: items.length, added: addedIds.length, removed: removedIds.length });
+  } catch (err) { next(err); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// READY FOR PICKUP  → manual button + trigger_event for email
+// ═══════════════════════════════════════════════════════════
+// Pat's rule: shop staff press this when they've gathered whatever they
+// could actually find (which may not match the PM's request — sometimes
+// the exact piece is out, so a substitute gets scanned). The press is
+// the email trigger. The deferred email pipeline reads trigger_events
+// and fans the notice out to PM + Shop Manager + pickup person.
+router.post('/:ticketNumber/ready-for-pickup', authorize('equipment:read'), async (req, res, next) => {
+  try {
+    const tn = parseInt(req.params.ticketNumber, 10);
+    const project = await db('ticket_project').where('ticket_number', tn).first();
+    if (!project) return res.status(404).json({ error: 'Ticket not found' });
+
+    await db('ticket_project').where('ticket_number', tn)
+      .update({ status: 'filled', updated_at: db.fn.now() });
+
+    await db('trigger_events').insert({
+      event_type: 'ticket_ready_for_pickup',
+      reference_type: 'equipment_ticket',
+      payload: JSON.stringify({
+        ticket_number: tn,
+        project_id: project.project_id,
+        project_number: project.project_number,
+        pickup_person: project.pickup_person,
+        requestor_name: project.requestor_name,
+      }),
+      created_by: req.user.id,
+    });
+
+    res.json({ ok: true, ticket_number: tn, status: 'filled' });
   } catch (err) { next(err); }
 });
 

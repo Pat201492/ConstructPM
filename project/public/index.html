@@ -4732,6 +4732,15 @@ async function showTicketFull(tn){
 
     const actions=h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:16px'});
     actions.append(h('button',{className:'btn-outline',onclick:()=>{ stopPoll=true; overlay.remove(); }},'Close'));
+    // Always present, regardless of qty match — shop staff scan whatever
+    // is actually available, then press this to fire the email trigger.
+    const readyLabel = p.status === 'filled' ? '✓ Ready for Pickup' : 'Ready for Pickup';
+    actions.append(h('button',{className:'btn-outline',onclick:async()=>{
+      try {
+        await api('/equipment-tickets/'+tn+'/ready-for-pickup',{method:'POST'});
+        await render();
+      } catch(e){ alert(e.message); }
+    }},readyLabel));
     actions.append(h('button',{className:'btn',onclick:async()=>{
       if(!confirm('Mark ticket #'+tn+' as picked up? This sets equipment locations to the project, archives the ticket, generates the PDF, and removes it from the active board.')) return;
       try {
