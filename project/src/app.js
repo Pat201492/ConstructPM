@@ -90,9 +90,13 @@ app.use('/api/timesheets', timesheetRoutes);
 // Inventory (consumable materials — separate from equipment)
 app.use('/api/inventory', inventoryRoutes);
 
-// CSV Exports (QuickBooks, Procore, equipment, custom)
-app.use('/api/exports', exportRoutes);
+// CSV Exports (QuickBooks, Procore, equipment, custom).
+// Schedules MUST mount first so its handlers run before the broader
+// `/api/exports` prefix middleware (which would otherwise authenticate
+// + authorize twice and risk a future 404 catch-all in exportRoutes
+// swallowing schedule requests).
 app.use('/api/exports/schedules', savedExportRoutes);
+app.use('/api/exports', exportRoutes);
 
 // Admin (rate sheet, global variables, templates, inbox access)
 app.use('/api/admin', adminRoutes);

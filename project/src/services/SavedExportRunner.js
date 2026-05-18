@@ -32,6 +32,7 @@ const SavedExportRunner = {
   async run(savedExport) {
     let status = 'failed';
     let errorMsg = null;
+    const deliveryErrors = [];
     let delivered = 0, failed = 0, skipped = 0, rowCount = 0;
     let tmpPath = null;
 
@@ -68,7 +69,11 @@ const SavedExportRunner = {
       const html = emailBody(savedExport, rowCount);
 
       for (const r of recipients) {
-        if (!r.email) { failed++; continue; }
+        if (!r.email) {
+          failed++;
+          deliveryErrors.push(`${r.id}: no email on file`);
+          continue;
+        }
         try {
           const res = await NotificationService.sendEmailWithAttachment({
             to: r.email,
@@ -79,11 +84,13 @@ const SavedExportRunner = {
             contentType: 'text/csv',
           });
           if (res && res.delivered) delivered++;
-          else failed++;
+          else {
+            failed++;
+            if (res && res.reason) deliveryErrors.push(`${r.email}: ${res.reason}`);
+          }
         } catch (err) {
           failed++;
-          // Last error wins — fine for diagnosis
-          errorMsg = `delivery to ${r.email}: ${err.message}`;
+          deliveryErrors.push(`${r.email}: ${err.message}`);
         }
       }
 
@@ -92,10 +99,20 @@ const SavedExportRunner = {
       else if (delivered > 0) status = 'partial';
       else status = 'failed';
 
+      // Build the last_error summary: counts first (so the UI badge stays
+      // short), then up to a few distinct delivery errors for diagnosis.
+      // Truncate the detail tail so a 100-recipient export with 100
+      // different failures doesn't blow out the text column.
       const summary = [];
       if (failed > 0) summary.push(`${failed} failed`);
       if (skipped > 0) summary.push(`${skipped} skipped (inactive)`);
-      const stampError = summary.length > 0 ? summary.join(', ') : errorMsg;
+      let stampError = summary.length > 0 ? summary.join(', ') : null;
+      if (deliveryErrors.length > 0) {
+        const sample = [...new Set(deliveryErrors)].slice(0, 3).join('; ');
+        const more = deliveryErrors.length > 3 ? ` (+${deliveryErrors.length - 3} more)` : '';
+        stampError = `${stampError ?? 'delivery errors'} — ${sample}${more}`;
+      }
+      errorMsg = stampError;
 
       await this._stamp(savedExport.id, status, stampError);
       return { delivered, failed, skipped, rowCount, status, error: stampError };

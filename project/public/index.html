@@ -6687,6 +6687,9 @@ async function renderExports(main) {
   let columnSearch = '';
 
   // ── State (scheduler) ────────────────────────────────────
+  // Cached per renderExports() invocation. Users added/deactivated during
+  // the session won't appear/disappear until the Exports tab is re-rendered
+  // (any tab switch). Acceptable: org membership doesn't churn intra-session.
   let emailPickerUsers = null;
   async function getEmailPicker() {
     if (emailPickerUsers !== null) return emailPickerUsers;

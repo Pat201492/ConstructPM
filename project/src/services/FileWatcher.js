@@ -18,7 +18,7 @@ const db = require('../config/database');
 const GlobalVariable = require('../models/GlobalVariable');
 const NotificationService = require('./NotificationService');
 const SavedExportRunner = require('./SavedExportRunner');
-const cronParser = require('cron-parser');
+const { parseExpression } = require('cron-parser');
 
 class FileWatcher {
   constructor() {
@@ -246,6 +246,13 @@ class FileWatcher {
    * permanently broken export shouldn't pin the worker on every tick.
    * Manual-only saved exports (cron IS NULL) are ignored here; they only
    * fire via POST /api/exports/schedules/:id/trigger.
+   *
+   * Concurrency: each due row is claimed atomically by advancing
+   * next_run_at *before* SavedExportRunner.run. If two ticks overlap (a
+   * slow export running past the next polling interval), the second tick's
+   * UPDATE sees a future next_run_at and selects 0 rows. The claim uses
+   * the row's *current* next_run_at as a precondition so two parallel
+   * processes can't both grab the same row.
    */
   async _processDueSavedExports() {
     try {
@@ -258,6 +265,34 @@ class FileWatcher {
         });
 
       for (const row of due) {
+        // Compute the new next_run_at first — we need it to claim the row.
+        // If the cron is malformed, disable the row and skip to the next.
+        let nextRunAt;
+        try {
+          nextRunAt = parseExpression(row.cron, { currentDate: now }).next().toDate();
+        } catch (err) {
+          console.error(`[FileWatcher] saved_export "${row.name}" has invalid cron "${row.cron}" — disabling:`, err.message);
+          await db('saved_exports').where('id', row.id).update({
+            enabled: false,
+            last_status: 'failed',
+            last_error: `invalid cron: ${err.message}`,
+          });
+          continue;
+        }
+
+        // Claim the row by advancing next_run_at before running. The
+        // precondition (`previous next_run_at`) guarantees only one worker
+        // succeeds; if another already claimed it, the UPDATE affects 0
+        // rows and we skip. NULL is matched explicitly via IS NULL.
+        const claim = db('saved_exports').where('id', row.id);
+        if (row.next_run_at == null) claim.whereNull('next_run_at');
+        else claim.where('next_run_at', row.next_run_at);
+        const claimed = await claim.update({ next_run_at: nextRunAt });
+        if (!claimed) {
+          // Another worker grabbed it — move on without double-firing.
+          continue;
+        }
+
         try {
           const result = await SavedExportRunner.run(row);
           console.log(`[FileWatcher] saved_export "${row.name}" → ${result.status} (delivered=${result.delivered}, failed=${result.failed}, rows=${result.rowCount})`);
@@ -268,20 +303,6 @@ class FileWatcher {
           await db('saved_exports').where('id', row.id).update({
             last_run_at: now, last_status: 'failed', last_error: err.message,
           }).catch(() => {});
-        }
-        // Advance next_run_at even on failure — see comment above.
-        try {
-          const next = cronParser.parseExpression(row.cron, { currentDate: now }).next().toDate();
-          await db('saved_exports').where('id', row.id).update({ next_run_at: next });
-        } catch (err) {
-          // Bad cron string — disable the row so we stop tripping the same
-          // landmine every tick. The user can edit and re-enable.
-          console.error(`[FileWatcher] saved_export "${row.name}" has invalid cron "${row.cron}" — disabling:`, err.message);
-          await db('saved_exports').where('id', row.id).update({
-            enabled: false,
-            last_status: 'failed',
-            last_error: `invalid cron: ${err.message}`,
-          });
         }
       }
 

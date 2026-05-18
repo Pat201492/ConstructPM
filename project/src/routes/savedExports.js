@@ -2,20 +2,22 @@
  * Saved & scheduled exports — CRUD + manual trigger.
  *
  *   GET    /api/exports/schedules           List (owner-scoped; admin sees all)
- *   POST   /api/exports/schedules           Create
+ *   POST   /api/exports/schedules           Create                       [exports:manage]
  *   GET    /api/exports/schedules/:id       Get one
- *   PATCH  /api/exports/schedules/:id       Update
- *   DELETE /api/exports/schedules/:id       Remove
- *   POST   /api/exports/schedules/:id/trigger   Run now, return delivery summary
+ *   PATCH  /api/exports/schedules/:id       Update                       [exports:manage]
+ *   DELETE /api/exports/schedules/:id       Remove                       [exports:manage]
+ *   POST   /api/exports/schedules/:id/trigger   Run now                  [exports:read]
  *
- * Auth: requires `exports:read` (matches the existing builder routes). All
- * write actions further require the user to be the owner OR admin. Listing
- * is filtered to the user's own rows unless they're admin.
+ * Auth: all routes require `exports:read`. Write actions additionally
+ * require `exports:manage` (admin + project_manager). Accounting is
+ * read-only — they can list/get/trigger their own rows but not create,
+ * edit, or delete them. Owner-or-admin gate applies on top for per-row
+ * access. Listing is filtered to the user's own rows unless they're admin.
  */
 
 const express = require('express');
-const { body, param, validationResult } = require('express-validator');
-const cronParser = require('cron-parser');
+const { param, validationResult } = require('express-validator');
+const { parseExpression } = require('cron-parser');
 
 const authenticate = require('../middleware/authenticate');
 const { authorize } = require('../middleware/authorize');
@@ -47,7 +49,7 @@ async function fetchOwnedOrAdmin(req, id) {
 }
 
 function nextRunFromCron(cron, from = new Date()) {
-  return cronParser.parseExpression(cron, { currentDate: from }).next().toDate();
+  return parseExpression(cron, { currentDate: from }).next().toDate();
 }
 
 function validatePayload(req, { partial = false } = {}) {
@@ -114,14 +116,19 @@ function validatePayload(req, { partial = false } = {}) {
   return { out, errs };
 }
 
-function serialize(row) {
+// Keep owner_user_id when the caller is admin (so the all-rows view can
+// label whose row is whose); strip it for non-admin owners — they already
+// know it's theirs, and the UI never reads it.
+function serialize(row, { includeOwner = false } = {}) {
   if (!row) return row;
-  return {
+  const out = {
     ...row,
     columns: typeof row.columns === 'string' ? JSON.parse(row.columns) : row.columns,
     filters: typeof row.filters === 'string' ? JSON.parse(row.filters) : (row.filters || {}),
     recipients: typeof row.recipients === 'string' ? JSON.parse(row.recipients) : (row.recipients || []),
   };
+  if (!includeOwner) delete out.owner_user_id;
+  return out;
 }
 
 // ─── LIST ───────────────────────────────────────────────────────────────
@@ -129,7 +136,8 @@ function serialize(row) {
 router.get('/', async (req, res, next) => {
   try {
     const rows = await scopedQuery(req).orderBy('created_at', 'desc');
-    res.json({ schedules: rows.map(serialize) });
+    const includeOwner = isAdmin(req.user);
+    res.json({ schedules: rows.map(r => serialize(r, { includeOwner })) });
   } catch (err) { next(err); }
 });
 
@@ -141,13 +149,13 @@ router.get('/:id', [param('id').isUUID()], async (req, res, next) => {
     if (!v.isEmpty()) return res.status(400).json({ error: 'Validation error', details: v.array() });
     const { row, err } = await fetchOwnedOrAdmin(req, req.params.id);
     if (err) return res.status(err.status).json({ error: err.msg });
-    res.json({ schedule: serialize(row) });
+    res.json({ schedule: serialize(row, { includeOwner: isAdmin(req.user) }) });
   } catch (err) { next(err); }
 });
 
 // ─── CREATE ─────────────────────────────────────────────────────────────
 
-router.post('/', async (req, res, next) => {
+router.post('/', authorize('exports:manage'), async (req, res, next) => {
   try {
     const { out, errs } = validatePayload(req, { partial: false });
     if (errs.length) return res.status(400).json({ error: 'Validation error', details: errs });
@@ -161,13 +169,13 @@ router.post('/', async (req, res, next) => {
     };
 
     const [row] = await db('saved_exports').insert(insert).returning('*');
-    res.status(201).json({ schedule: serialize(row) });
+    res.status(201).json({ schedule: serialize(row, { includeOwner: isAdmin(req.user) }) });
   } catch (err) { next(err); }
 });
 
 // ─── UPDATE ─────────────────────────────────────────────────────────────
 
-router.patch('/:id', [param('id').isUUID()], async (req, res, next) => {
+router.patch('/:id', authorize('exports:manage'), [param('id').isUUID()], async (req, res, next) => {
   try {
     const v = validationResult(req);
     if (!v.isEmpty()) return res.status(400).json({ error: 'Validation error', details: v.array() });
@@ -178,25 +186,36 @@ router.patch('/:id', [param('id').isUUID()], async (req, res, next) => {
     if (errs.length) return res.status(400).json({ error: 'Validation error', details: errs });
     if (Object.keys(out).length === 0) return res.status(400).json({ error: 'No fields to update' });
 
-    // If columns changed but source didn't, re-validate columns against the existing source
-    if (out.columns !== undefined && out.source === undefined) {
-      const allowed = M.allowedColumnKeys(row.source);
-      const cols = JSON.parse(out.columns);
-      const invalid = cols.filter(c => !allowed.has(c));
+    // Cross-field column/source validation. validatePayload only checks
+    // columns against b.source when both are in the same payload. Cover
+    // the other two cases here against the effective post-update source:
+    //   1. columns provided alone → validate vs. existing row.source
+    //   2. source provided alone → validate row.columns vs. new source
+    const effectiveSource = out.source !== undefined ? out.source : row.source;
+    const columnsToCheck = out.columns !== undefined
+      ? JSON.parse(out.columns)
+      : (out.source !== undefined ? normalizeJsonArrayLocal(row.columns) : null);
+    if (columnsToCheck) {
+      const allowed = M.allowedColumnKeys(effectiveSource);
+      const invalid = columnsToCheck.filter(c => !allowed.has(c));
       if (invalid.length > 0) {
-        return res.status(400).json({ error: `invalid columns for "${row.source}": ${invalid.join(', ')}` });
+        return res.status(400).json({
+          error: out.source !== undefined && out.columns === undefined
+            ? `existing columns are invalid for new source "${effectiveSource}": ${invalid.join(', ')} — update columns in the same request`
+            : `invalid columns for "${effectiveSource}": ${invalid.join(', ')}`,
+        });
       }
     }
 
     out.updated_at = db.fn.now();
     const [updated] = await db('saved_exports').where('id', req.params.id).update(out).returning('*');
-    res.json({ schedule: serialize(updated) });
+    res.json({ schedule: serialize(updated, { includeOwner: isAdmin(req.user) }) });
   } catch (err) { next(err); }
 });
 
 // ─── DELETE ─────────────────────────────────────────────────────────────
 
-router.delete('/:id', [param('id').isUUID()], async (req, res, next) => {
+router.delete('/:id', authorize('exports:manage'), [param('id').isUUID()], async (req, res, next) => {
   try {
     const v = validationResult(req);
     if (!v.isEmpty()) return res.status(400).json({ error: 'Validation error', details: v.array() });
@@ -208,7 +227,10 @@ router.delete('/:id', [param('id').isUUID()], async (req, res, next) => {
 });
 
 // ─── TRIGGER (manual) ───────────────────────────────────────────────────
-
+// Intentionally gated by `exports:read` (not `exports:manage`) so accounting
+// — who can read but not author — can still fire their own saved exports.
+// Also intentionally ignores `enabled`: a paused row's schedule doesn't
+// fire, but a manual trigger is the user explicitly asking it to run now.
 router.post('/:id/trigger', [param('id').isUUID()], async (req, res, next) => {
   try {
     const v = validationResult(req);
@@ -220,5 +242,14 @@ router.post('/:id/trigger', [param('id').isUUID()], async (req, res, next) => {
     res.json(result);
   } catch (err) { next(err); }
 });
+
+// Small local helper for the cross-field column check above. Mirrors the
+// shape of SavedExportRunner.normalizeJsonArray without the dependency.
+function normalizeJsonArrayLocal(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string') { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
+  return [];
+}
 
 module.exports = router;
