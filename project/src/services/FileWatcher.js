@@ -17,6 +17,8 @@
 const db = require('../config/database');
 const GlobalVariable = require('../models/GlobalVariable');
 const NotificationService = require('./NotificationService');
+const SavedExportRunner = require('./SavedExportRunner');
+const cronParser = require('cron-parser');
 
 class FileWatcher {
   constructor() {
@@ -99,6 +101,7 @@ class FileWatcher {
         this._checkOverduePayments(),
         this._checkRevenueThreshold(),
         this._checkOilSampleReminders(),
+        this._processDueSavedExports(),
       ]);
       console.log(`[FileWatcher] Checks complete in ${Date.now() - start}ms`);
     } catch (err) {
@@ -234,6 +237,59 @@ class FileWatcher {
           console.error(`[FileWatcher] Contract check error for ${project.name}:`, err.message);
         }
       }
+    }
+  }
+
+  /**
+   * Run any saved_exports whose cron has come due. Recomputes next_run_at
+   * from the cron expression after each run, regardless of success — a
+   * permanently broken export shouldn't pin the worker on every tick.
+   * Manual-only saved exports (cron IS NULL) are ignored here; they only
+   * fire via POST /api/exports/schedules/:id/trigger.
+   */
+  async _processDueSavedExports() {
+    try {
+      const now = new Date();
+      const due = await db('saved_exports')
+        .where('enabled', true)
+        .whereNotNull('cron')
+        .where(function () {
+          this.whereNull('next_run_at').orWhere('next_run_at', '<=', now);
+        });
+
+      for (const row of due) {
+        try {
+          const result = await SavedExportRunner.run(row);
+          console.log(`[FileWatcher] saved_export "${row.name}" → ${result.status} (delivered=${result.delivered}, failed=${result.failed}, rows=${result.rowCount})`);
+        } catch (err) {
+          console.error(`[FileWatcher] saved_export "${row.name}" threw:`, err.message);
+          // Runner already stamps on its own catch path; this is the
+          // belt-and-suspenders for anything it didn't catch.
+          await db('saved_exports').where('id', row.id).update({
+            last_run_at: now, last_status: 'failed', last_error: err.message,
+          }).catch(() => {});
+        }
+        // Advance next_run_at even on failure — see comment above.
+        try {
+          const next = cronParser.parseExpression(row.cron, { currentDate: now }).next().toDate();
+          await db('saved_exports').where('id', row.id).update({ next_run_at: next });
+        } catch (err) {
+          // Bad cron string — disable the row so we stop tripping the same
+          // landmine every tick. The user can edit and re-enable.
+          console.error(`[FileWatcher] saved_export "${row.name}" has invalid cron "${row.cron}" — disabling:`, err.message);
+          await db('saved_exports').where('id', row.id).update({
+            enabled: false,
+            last_status: 'failed',
+            last_error: `invalid cron: ${err.message}`,
+          });
+        }
+      }
+
+      if (due.length > 0) {
+        console.log(`[FileWatcher] Saved exports processed: ${due.length}`);
+      }
+    } catch (err) {
+      console.error('[FileWatcher] Saved-exports error:', err.message);
     }
   }
 

@@ -22,6 +22,7 @@ const notificationRoutes = require('./routes/notifications');
 const timesheetRoutes = require('./routes/timesheets');
 const inventoryRoutes = require('./routes/inventory');
 const exportRoutes = require('./routes/exports');
+const savedExportRoutes = require('./routes/savedExports');
 const adminRoutes = require('./routes/admin');
 const inboxRoutes = require('./routes/inbox');
 const equipmentRoutes = require('./routes/equipment');
@@ -91,6 +92,7 @@ app.use('/api/inventory', inventoryRoutes);
 
 // CSV Exports (QuickBooks, Procore, equipment, custom)
 app.use('/api/exports', exportRoutes);
+app.use('/api/exports/schedules', savedExportRoutes);
 
 // Admin (rate sheet, global variables, templates, inbox access)
 app.use('/api/admin', adminRoutes);

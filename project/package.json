@@ -25,6 +25,7 @@
     "bcryptjs": "^3.0.3",
     "bull": "^4.16.5",
     "cors": "^2.8.6",
+    "cron-parser": "^4.9.0",
     "docx": "^8.5.0",
     "docxtemplater": "^3.68.4",
     "dotenv": "^17.4.1",
