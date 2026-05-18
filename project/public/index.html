@@ -6755,8 +6755,11 @@ async function renderExports(main) {
         e.preventDefault();
         chip.style.borderTop = '1px solid var(--border)';
         const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
-        const to = idx;
-        if (Number.isNaN(from) || from === to) return;
+        if (Number.isNaN(from) || from === idx) return;
+        // "Drop on chip N" inserts before N. When moving downward, the
+        // splice-out shifts every later index down by 1, so subtract 1
+        // from the target to land in the visually-correct slot.
+        const to = from < idx ? idx - 1 : idx;
         const moved = selectedColumns.splice(from, 1)[0];
         selectedColumns.splice(to, 0, moved);
         renderRight();
