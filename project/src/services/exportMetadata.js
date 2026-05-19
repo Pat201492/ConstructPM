@@ -290,7 +290,6 @@ const SOURCES = {
       { key: 'status', label: 'Status' },
       { key: 'current_location', label: 'Current Location' },
       { key: 'certification_date', label: 'Cert Expiry' },
-      { key: 'cert_expiry_alert_days', label: 'Cert Alert (days)' },
       { key: 'notes', label: 'Notes' },
       { key: 'created_at', label: 'Created' },
     ],

@@ -4895,7 +4895,6 @@ async function refreshEquipmentList(content, canManage) {
       <div class="form-group"><label>Type</label><input id="eq-type" placeholder="e.g. Power Tool" list="eq-type-suggestions"></div>
       <div class="form-group"><label>Sub-type</label><input id="eq-subtype" placeholder="e.g. Drill"></div>
       <div class="form-group"><label>Cert Date</label><input id="eq-cert" type="date"></div>
-      <div class="form-group"><label>Cert Alert (days before expiry)</label><input id="eq-cert-alert" type="number" value="30" min="0"></div>
     </div>
     <datalist id="eq-type-suggestions"></datalist>`;
 
@@ -4912,7 +4911,6 @@ async function refreshEquipmentList(content, canManage) {
           equipment_type: $('#eq-type').value || null,
           equipment_subtype: $('#eq-subtype').value || null,
           certification_date: $('#eq-cert').value || null,
-          cert_expiry_alert_days: parseInt($('#eq-cert-alert').value, 10) || 30,
         })});
         await refreshEquipmentList(content, canManage);
       } catch (e) { alert(e.message); }
@@ -5014,7 +5012,6 @@ async function showEquipmentEditPopup(item, onSaved) {
   field('eqe-type', 'Type', 'text', item.equipment_type);
   field('eqe-subtype', 'Sub-type', 'text', item.equipment_subtype);
   field('eqe-cert', 'Cert Date', 'date', item.certification_date ? String(item.certification_date).split('T')[0] : '');
-  field('eqe-cert-alert', 'Cert Alert (days)', 'number', item.cert_expiry_alert_days || 30, {min:'0'});
   modal.append(grid);
 
   const notesLabel = h('label',{style:'display:block;margin-top:8px'},'Notes');
@@ -5032,7 +5029,6 @@ async function showEquipmentEditPopup(item, onSaved) {
         equipment_type: $('#eqe-type').value || null,
         equipment_subtype: $('#eqe-subtype').value || null,
         certification_date: $('#eqe-cert').value || null,
-        cert_expiry_alert_days: parseInt($('#eqe-cert-alert').value, 10) || 30,
         notes: $('#eqe-notes').value || null,
       })});
       overlay.remove();
@@ -5216,13 +5212,8 @@ async function renderSchedule(main) {
     cell.append(h('div',{style:`font-size:11px;color:${isToday ? 'var(--primary)' : 'var(--text2)'};font-weight:${isToday ? 700 : 400};margin-bottom:2px`}, String(day.getDate())));
 
     projects.filter(p => projectOccupiesDay(p, day)).forEach(p => {
-      const cardChildren = [];
-      if (p.weekend_only) {
-        cardChildren.push(h('span',{style:'background:rgba(255,255,255,0.28);padding:0 4px;border-radius:2px;font-size:9px;font-weight:700;margin-right:4px;letter-spacing:0.3px'}, 'WE'));
-      }
-      cardChildren.push((p.primary_number || p.name || 'Project') + (p.customer_name ? ' · ' + p.customer_name : ''));
       const card = h('div',{
-        title: `${p.weekend_only ? '[Weekend Only] ' : ''}${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}`,
+        title: `${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}`,
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
@@ -5236,7 +5227,7 @@ async function renderSchedule(main) {
           text-overflow:ellipsis;
           white-space:nowrap;
         `,
-      }, cardChildren);
+      }, (p.primary_number || p.name || 'Project') + (p.customer_name ? ' · ' + p.customer_name : ''));
       card.onclick = () => showScheduleEditPopup(p.id, () => { main.innerHTML=''; renderSchedule(main); });
       cell.append(card);
     });
@@ -5308,15 +5299,17 @@ async function showScheduleEditPopup(projectId, onSaved) {
   // When on, the Sat/Sun checkboxes are irrelevant (both days work) and
   // are visually dimmed; their stored values are preserved so toggling
   // weekend-only off restores the user's prior preferences.
-  const wdRow = h('div',{style:'display:flex;gap:14px;margin-top:4px;align-items:center'});
+  const wdRow = h('div',{style:'display:flex;flex-direction:column;gap:6px;margin-top:4px;align-items:flex-start'});
   const satCb = h('input',{type:'checkbox',id:'sch-sat'}); satCb.checked = !!schedule.works_saturday;
   const sunCb = h('input',{type:'checkbox',id:'sch-sun'}); sunCb.checked = !!schedule.works_sunday;
   const weCb  = h('input',{type:'checkbox',id:'sch-weekend-only'}); weCb.checked = !!schedule.weekend_only;
   const satLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ satCb, h('span',{},'Saturday') ]);
   const sunLabel = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ sunCb, h('span',{},'Sunday') ]);
-  const weLabel  = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ weCb,  h('span',{},'Weekend Only') ]);
-  wdRow.append(satLabel);
-  wdRow.append(sunLabel);
+  const weLabel  = h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap'},[ weCb,  h('span',{},'Weekend Only') ]);
+  const satSunRow = h('div',{style:'display:flex;gap:14px;align-items:center'});
+  satSunRow.append(satLabel);
+  satSunRow.append(sunLabel);
+  wdRow.append(satSunRow);
   wdRow.append(weLabel);
   modal.append(wdRow);
   function syncWeekendOnlyUi() {
@@ -5626,13 +5619,8 @@ async function renderScheduler(main) {
       const isFullyStaffedDay = fsDays.has(dKey);
       const stamp = isFullyStaffedDay ? '✅ ' : '';
       const countLabel = target > 0 ? ` (${assigned}/${target})` : ` (${assigned})`;
-      const cardChildren = [];
-      if (p.weekend_only) {
-        cardChildren.push(h('span',{style:'background:rgba(255,255,255,0.28);padding:0 4px;border-radius:2px;font-size:9px;font-weight:700;margin-right:4px;letter-spacing:0.3px'}, 'WE'));
-      }
-      cardChildren.push(stamp + (p.primary_number || p.name || 'Project') + countLabel);
       const card = h('div',{
-        title: `${p.weekend_only ? '[Weekend Only] ' : ''}${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}\nClick to manage crew for ${dKey}`,
+        title: `${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}\nClick to manage crew for ${dKey}`,
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
@@ -5646,7 +5634,7 @@ async function renderScheduler(main) {
           text-overflow:ellipsis;
           white-space:nowrap;
         `,
-      }, cardChildren);
+      }, stamp + (p.primary_number || p.name || 'Project') + countLabel);
       card.onclick = () => showSchedulerDayPopup(p, dKey, () => { main.innerHTML=''; renderScheduler(main); });
       cell.append(card);
     });

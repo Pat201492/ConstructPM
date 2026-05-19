@@ -101,6 +101,7 @@ class FileWatcher {
         this._checkOverduePayments(),
         this._checkRevenueThreshold(),
         this._checkOilSampleReminders(),
+        this._checkCertExpiryAlerts(),
         this._processDueSavedExports(),
       ]);
       console.log(`[FileWatcher] Checks complete in ${Date.now() - start}ms`);
@@ -391,6 +392,70 @@ class FileWatcher {
       }
     } catch (err) {
       console.error('[FileWatcher] Oil sample reminder error:', err.message);
+    }
+  }
+
+  /**
+   * Surface equipment whose certification is within the
+   * `cert_expiry_alert_days` global threshold (Admin → Global Variables).
+   * One actionable notification per piece, sent to all active admins.
+   * Re-firing is gated by an unread notification of the same type for the
+   * same equipment, so admins ack-or-snooze rather than getting daily noise.
+   * Retired equipment is skipped — no point alerting on gear that's out.
+   */
+  async _checkCertExpiryAlerts() {
+    try {
+      const alertDays = await GlobalVariable.getCertExpiryAlertDays();
+      const today = new Date();
+      const cutoff = new Date(today);
+      cutoff.setDate(cutoff.getDate() + alertDays);
+
+      const expiring = await db('equipment')
+        .whereNotNull('certification_date')
+        .where('certification_date', '<=', cutoff.toISOString().slice(0, 10))
+        .whereNot('status', 'retired');
+
+      if (expiring.length === 0) return;
+
+      const adminIds = await NotificationService.getAdminIds();
+      if (adminIds.length === 0) return;
+
+      let sent = 0;
+      for (const eq of expiring) {
+        const existing = await db('notifications')
+          .where({ reference_type: 'equipment', reference_id: eq.id, type: 'cert_expiry_alert' })
+          .where('read', false).first();
+        if (existing) continue;
+
+        const certDate = new Date(eq.certification_date);
+        const daysLeft = Math.ceil((certDate - today) / 86400000);
+        const phrase = daysLeft < 0
+          ? `expired ${Math.abs(daysLeft)} day(s) ago`
+          : `expires in ${daysLeft} day(s)`;
+
+        try {
+          await NotificationService.send({
+            userIds: adminIds,
+            type: 'cert_expiry_alert',
+            category: 'actionable',
+            title: `Equipment cert ${daysLeft < 0 ? 'expired' : 'expiring'} — ${eq.equipment_name}`,
+            body: `${eq.equipment_name} (${eq.barcode_id}) ${phrase}. Renew the certification or retire the item.`,
+            priority: daysLeft < 0 ? 'urgent' : 'high',
+            channel: 'in_app',
+            referenceType: 'equipment',
+            referenceId: eq.id,
+          });
+          sent += 1;
+        } catch (err) {
+          console.error(`[FileWatcher] Cert alert error for ${eq.barcode_id}:`, err.message);
+        }
+      }
+
+      if (sent > 0) {
+        console.log(`[FileWatcher] Cert expiry alerts: ${sent} sent (threshold ${alertDays}d)`);
+      }
+    } catch (err) {
+      console.error('[FileWatcher] Cert expiry check error:', err.message);
     }
   }
 }
