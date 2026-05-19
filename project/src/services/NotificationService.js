@@ -1,5 +1,14 @@
 const db = require('../config/database');
 
+// Normalize email address inputs: accept string, array, comma-separated
+// string, or null; return a trimmed deduplicated array of strings.
+function normalizeAddresses(v) {
+  if (!v) return [];
+  const raw = Array.isArray(v) ? v : String(v).split(',');
+  const cleaned = raw.map(s => String(s).trim()).filter(Boolean);
+  return [...new Set(cleaned)];
+}
+
 /**
  * Notification Service
  * 
@@ -244,16 +253,19 @@ const NotificationService = {
    * fans out per-user-preference and never carries attachments.
    *
    * @param {Object} opts
-   * @param {string} opts.to        Recipient email
+   * @param {string|string[]} opts.to   Recipient email(s) — single string or array
+   * @param {string|string[]} [opts.cc] Optional CC email(s) — single or array
    * @param {string} opts.subject
-   * @param {string} opts.html      HTML body
-   * @param {string} opts.filePath  Absolute path of file to attach
-   * @param {string} opts.filename  Display filename on the attachment
+   * @param {string} opts.html          HTML body
+   * @param {string} opts.filePath      Absolute path of file to attach
+   * @param {string} opts.filename      Display filename on the attachment
    * @param {string} [opts.contentType] MIME — defaults to docx
    * @returns {Promise<{delivered: boolean, provider: string, reason?: string}>}
    */
-  async sendEmailWithAttachment({ to, subject, html, filePath, filename, contentType }) {
-    if (!to) return { delivered: false, provider: 'none', reason: 'no recipient' };
+  async sendEmailWithAttachment({ to, cc, subject, html, filePath, filename, contentType }) {
+    const toList = normalizeAddresses(to);
+    const ccList = normalizeAddresses(cc);
+    if (toList.length === 0) return { delivered: false, provider: 'none', reason: 'no recipient' };
     const fs = require('fs/promises');
     let fileBuf;
     try {
@@ -265,6 +277,8 @@ const NotificationService = {
     const ct = contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
     if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
+      const personalization = { to: toList.map(e => ({ email: e })) };
+      if (ccList.length > 0) personalization.cc = ccList.map(e => ({ email: e }));
       const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
         method: 'POST',
         headers: {
@@ -272,7 +286,7 @@ const NotificationService = {
           'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
         },
         body: JSON.stringify({
-          personalizations: [{ to: [{ email: to }] }],
+          personalizations: [personalization],
           from: { email: process.env.EMAIL_FROM || 'noreply@constructpm.com' },
           subject,
           content: [{ type: 'text/html', value: html }],
@@ -298,9 +312,11 @@ const NotificationService = {
       const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses');
       const boundary = `mime-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       const from = process.env.EMAIL_FROM || 'noreply@constructpm.com';
+      const ccHeader = ccList.length > 0 ? `Cc: ${ccList.join(', ')}\r\n` : '';
       const raw =
         `From: ${from}\r\n` +
-        `To: ${to}\r\n` +
+        `To: ${toList.join(', ')}\r\n` +
+        ccHeader +
         `Subject: ${subject}\r\n` +
         `MIME-Version: 1.0\r\n` +
         `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
@@ -324,7 +340,8 @@ const NotificationService = {
 
     // No provider configured — log and report back so the API can tell
     // the caller the email step was skipped (vs. silently lost).
-    console.log(`[NotificationService] EMAIL+ATTACHMENT (dev): To: ${to} | Subject: ${subject} | Attachment: ${filename} (${fileBuf.length} bytes)`);
+    const ccLabel = ccList.length > 0 ? ` | CC: ${ccList.join(', ')}` : '';
+    console.log(`[NotificationService] EMAIL+ATTACHMENT (dev): To: ${toList.join(', ')}${ccLabel} | Subject: ${subject} | Attachment: ${filename} (${fileBuf.length} bytes)`);
     return { delivered: false, provider: 'none', reason: 'no EMAIL_PROVIDER configured' };
   },
 
@@ -335,19 +352,24 @@ const NotificationService = {
    * that just need a plain HTML/text email out the door.
    *
    * @param {Object} opts
-   * @param {string} opts.to        Recipient email
+   * @param {string|string[]} opts.to   Recipient email(s) — single string or array
+   * @param {string|string[]} [opts.cc] Optional CC email(s) — single or array
    * @param {string} opts.subject
-   * @param {string} opts.html      HTML body
-   * @param {string} [opts.text]    Optional plain-text fallback
+   * @param {string} opts.html          HTML body
+   * @param {string} [opts.text]        Optional plain-text fallback
    * @returns {Promise<{delivered: boolean, provider: string, reason?: string}>}
    */
-  async sendEmail({ to, subject, html, text }) {
-    if (!to) return { delivered: false, provider: 'none', reason: 'no recipient' };
+  async sendEmail({ to, cc, subject, html, text }) {
+    const toList = normalizeAddresses(to);
+    const ccList = normalizeAddresses(cc);
+    if (toList.length === 0) return { delivered: false, provider: 'none', reason: 'no recipient' };
     const provider = process.env.EMAIL_PROVIDER;
 
     if (provider === 'sendgrid' && process.env.SENDGRID_API_KEY) {
       const content = [{ type: 'text/html', value: html || '' }];
       if (text) content.unshift({ type: 'text/plain', value: text });
+      const personalization = { to: toList.map(e => ({ email: e })) };
+      if (ccList.length > 0) personalization.cc = ccList.map(e => ({ email: e }));
       const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
         method: 'POST',
         headers: {
@@ -355,7 +377,7 @@ const NotificationService = {
           'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
         },
         body: JSON.stringify({
-          personalizations: [{ to: [{ email: to }] }],
+          personalizations: [personalization],
           from: { email: process.env.EMAIL_FROM || 'noreply@constructpm.com' },
           subject,
           content,
@@ -373,10 +395,12 @@ const NotificationService = {
       const client = new SESClient({ region: process.env.SES_REGION });
       const body = { Html: { Data: html || '' } };
       if (text) body.Text = { Data: text };
+      const destination = { ToAddresses: toList };
+      if (ccList.length > 0) destination.CcAddresses = ccList;
       try {
         await client.send(new SendEmailCommand({
           Source: process.env.EMAIL_FROM || 'noreply@constructpm.com',
-          Destination: { ToAddresses: [to] },
+          Destination: destination,
           Message: { Subject: { Data: subject }, Body: body },
         }));
         return { delivered: true, provider: 'ses' };
@@ -386,7 +410,8 @@ const NotificationService = {
     }
 
     // Dev mode — log and report back.
-    console.log(`[NotificationService] EMAIL (dev): To: ${to} | Subject: ${subject}`);
+    const ccLabel = ccList.length > 0 ? ` | CC: ${ccList.join(', ')}` : '';
+    console.log(`[NotificationService] EMAIL (dev): To: ${toList.join(', ')}${ccLabel} | Subject: ${subject}`);
     return { delivered: false, provider: 'none', reason: 'no EMAIL_PROVIDER configured' };
   },
 
