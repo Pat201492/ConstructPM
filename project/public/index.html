@@ -4571,6 +4571,7 @@ async function etActiveTickets(c){
       top.append(h('span',{style:'background:var(--primary);color:#fff;border-radius:12px;padding:1px 9px;font-size:12px'},String(t.total_quantity)));
       card.append(top);
       if(t.status==='filled') card.append(h('div',{style:'font-size:11px;color:#2e7d32;margin-bottom:6px'},'✓ Filled'));
+      if(t.status==='ready_for_pickup') card.append(h('div',{style:'font-size:11px;color:#b26a00;margin-bottom:6px;font-weight:600'},'🛎 Ready for pick-up'));
       const mini=h('table',{style:'width:100%;font-size:12px'});
       t.lines.slice(0,6).forEach(l=>{
         const tr=h('tr');
@@ -4636,7 +4637,8 @@ async function showTicketFull(tn){
       <strong>Location:</strong> ${p.location_name||'—'}<br>
       <strong>Address:</strong> ${p.location_address||'—'}<br>
       <strong>Site Contact:</strong> ${p.site_contact_name||'—'} ${p.site_contact_phone||''}<br>
-      <strong>Status:</strong> ${p.status}`;
+      <strong>Status:</strong> ${p.status}` +
+      (p.ready_at ? `<br><strong>Ready since:</strong> ${new Date(p.ready_at).toLocaleString()}` : '');
     modal.append(info);
 
     const reqHeader = h('div',{style:'display:flex;align-items:center;gap:8px;margin:8px 0 6px'});
@@ -4732,15 +4734,18 @@ async function showTicketFull(tn){
 
     const actions=h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:16px'});
     actions.append(h('button',{className:'btn-outline',onclick:()=>{ stopPoll=true; overlay.remove(); }},'Close'));
-    // Always present, regardless of qty match — shop staff scan whatever
-    // is actually available, then press this to fire the email trigger.
-    const readyLabel = p.status === 'filled' ? '✓ Ready for Pickup' : 'Ready for Pickup';
-    actions.append(h('button',{className:'btn-outline',onclick:async()=>{
-      try {
-        await api('/equipment-tickets/'+tn+'/ready-for-pickup',{method:'POST'});
-        await render();
-      } catch(e){ alert(e.message); }
-    }},readyLabel));
+    // "Ready for Pick-up" — manual gate between filled and picked up.
+    // Triggers a notification (in-app + email) to the requestor + admins.
+    // Hidden once the ticket is already in ready_for_pickup or beyond.
+    if (p.status === 'filled') {
+      actions.append(h('button',{className:'btn-outline',style:'border-color:#b26a00;color:#b26a00',onclick:async()=>{
+        if(!confirm('Mark ticket #'+tn+' as ready for pick-up? This notifies the requestor (in-app + email).')) return;
+        try {
+          await api('/equipment-tickets/'+tn+'/ready',{method:'POST'});
+          await render();
+        } catch(e){ alert(e.message); }
+      }},'🛎 Ready for Pick-up'));
+    }
     actions.append(h('button',{className:'btn',onclick:async()=>{
       if(!confirm('Mark ticket #'+tn+' as picked up? This sets equipment locations to the project, archives the ticket, generates the PDF, and removes it from the active board.')) return;
       try {
