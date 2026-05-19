@@ -54,6 +54,11 @@ const GlobalVariable = {
     return (await this.get('tracking_week_start_day')) || 'Monday';
   },
 
+  async getCertExpiryAlertDays() {
+    const val = await this.get('cert_expiry_alert_days');
+    return val ? parseInt(val, 10) : 30;
+  },
+
   async getHomeLocation() {
     const [address, lat, lng] = await Promise.all([
       this.get('home_location_address'),
