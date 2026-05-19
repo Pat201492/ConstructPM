@@ -6126,6 +6126,359 @@ async function renderSchedulerByWorker(main) {
 // Top-level Email Day to Staff picker — replaces the per-day-popup
 // button. Asks for a date, lists projects scheduled on that date with
 // their assigned crew count, picks one, confirms, fires the email.
+// ─────────────────────────────────────────────────────────────────────
+//  Compose Email modal
+// ─────────────────────────────────────────────────────────────────────
+//
+// Reusable modal that sits in front of the actual email-fire moment for
+// Scheduler → Email Day to Staff and Saved Exports → Run now. Fetches a
+// variable catalog from /api/email-compose/catalog for the given context,
+// pre-fills To/Subject/Body from the template defaults, lets the user
+// tweak everything (Body uses a contentEditable div with chip insertion
+// via an Insert Variable button), and live-previews the resolved output
+// in a pane below. On Send, the raw composed strings (still containing
+// `{{var}}` tokens for any inserted chips) are passed to onSend so the
+// caller can POST them as overrides — backend resolves at send time.
+//
+// Usage:
+//   composeEmailModal({
+//     context: 'email_day_to_staff',
+//     ids:     { project_id: '...', date: '2026-05-18' },
+//     onSend:  async (payload) => api('/projects/.../email-day', {
+//                method:'POST', body: JSON.stringify({ date, ...payload }),
+//              }),
+//   });
+//
+// payload shape: { override_to, extra_cc, override_subject, override_body_html }
+async function composeEmailModal({ context, ids, onSend, title = 'Send Email' }) {
+  // 1. Fetch catalog (vars + defaults). If this fails, surface and bail.
+  const catalogQs = new URLSearchParams({ context, ...(ids || {}) }).toString();
+  let catalog;
+  try {
+    catalog = await api('/email-compose/catalog?' + catalogQs);
+  } catch (e) {
+    alert('Could not load compose catalog: ' + e.message);
+    return;
+  }
+
+  // 2. Modal shell
+  const overlay = h('div', { className: 'modal-overlay' });
+  const modal = h('div', {
+    className: 'modal',
+    style: 'max-width:780px;max-height:92vh;display:flex;flex-direction:column;gap:8px',
+  });
+  modal.append(h('h2', { style: 'margin:0 0 4px' }, title));
+
+  // 3. To row (chips)
+  let toRecipients = (catalog.defaults && catalog.defaults.to) ? catalog.defaults.to.slice() : [];
+  const toRow = h('div', { className: 'form-group' });
+  toRow.append(h('label', {}, 'Send To'));
+  const toChips = h('div', {
+    style: 'min-height:32px;padding:4px;border:1px solid var(--border);border-radius:4px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;background:var(--bg)',
+  });
+  function renderToChips() {
+    toChips.innerHTML = '';
+    toRecipients.forEach((r, i) => {
+      const chip = h('span', {
+        style: 'background:var(--bg3);border:1px solid var(--border);padding:2px 6px;border-radius:3px;font-size:12px;display:inline-flex;gap:6px;align-items:center',
+      });
+      chip.append(document.createTextNode(`${r.label || r.email} <${r.email}>`));
+      chip.append(h('span', {
+        style: 'cursor:pointer;color:var(--red);font-weight:700;font-size:14px;line-height:1',
+        onclick: () => { toRecipients.splice(i, 1); renderToChips(); schedulePreview(); },
+      }, '×'));
+      toChips.append(chip);
+    });
+    const addBtn = h('button', {
+      className: 'btn-outline btn-sm',
+      style: 'padding:2px 8px;font-size:11px',
+      onclick: (e) => { e.preventDefault(); promptAddRecipient(); },
+    }, '+ Add');
+    toChips.append(addBtn);
+  }
+  function promptAddRecipient() {
+    const raw = window.prompt('Add recipient email:');
+    if (!raw) return;
+    raw.split(',').map(s => s.trim()).filter(Boolean).forEach(email => {
+      toRecipients.push({ email, label: email });
+    });
+    renderToChips();
+    schedulePreview();
+  }
+  toRow.append(toChips);
+  modal.append(toRow);
+  renderToChips();
+
+  // 4. CC row (comma-separated free text)
+  const ccRow = h('div', { className: 'form-group' });
+  ccRow.append(h('label', {}, 'CC (comma-separated emails)'));
+  const ccInp = h('input', { type: 'text', placeholder: 'e.g. boss@co.com, accounting@co.com' });
+  ccInp.addEventListener('input', schedulePreview);
+  ccRow.append(ccInp);
+  modal.append(ccRow);
+
+  // 5. Subject row (with Insert Variable)
+  const subjRow = h('div', { className: 'form-group' });
+  subjRow.append(h('label', {}, 'Subject'));
+  const subjInp = h('input', { type: 'text', value: (catalog.defaults && catalog.defaults.subject) || '' });
+  subjInp.addEventListener('input', schedulePreview);
+  const subjInsert = h('button', {
+    className: 'btn-outline btn-sm',
+    style: 'padding:2px 8px;font-size:11px;margin-top:4px',
+    onclick: (e) => { e.preventDefault(); openVarPicker({ target: 'subject' }); },
+  }, '+ Insert variable');
+  subjRow.append(subjInp);
+  subjRow.append(subjInsert);
+  modal.append(subjRow);
+
+  // 6. Body row (contentEditable + Insert Variable)
+  const bodyRow = h('div', { className: 'form-group' });
+  bodyRow.append(h('label', {}, 'Body'));
+  const bodyEditor = h('div', {
+    contentEditable: 'true',
+    style: 'min-height:180px;max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px;background:var(--bg);font-size:13px;line-height:1.5',
+  });
+  // Pre-fill from template body_html. Any `{{var}}` markers in the
+  // template that match a catalog var get rendered as chips so the user
+  // can interact with them as units; unmatched markers stay as literal
+  // text and still resolve at send time via legacy-alias substitution.
+  bodyEditor.innerHTML = chipifyHtml((catalog.defaults && catalog.defaults.body_html) || '', catalog.vars || []);
+  // Force plain-text on paste — pasting from Word/web pastes a wall of
+  // weird HTML otherwise, which then needs serialization gymnastics.
+  bodyEditor.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    document.execCommand('insertText', false, text);
+  });
+  bodyEditor.addEventListener('input', schedulePreview);
+  // Save the caret on blur so Insert Variable knows where to drop the chip
+  // when the user clicks the picker button (which steals focus).
+  let savedRange = null;
+  bodyEditor.addEventListener('blur', () => {
+    const sel = window.getSelection();
+    if (sel.rangeCount && bodyEditor.contains(sel.anchorNode)) {
+      savedRange = sel.getRangeAt(0).cloneRange();
+    }
+  });
+  const bodyInsert = h('button', {
+    className: 'btn-outline btn-sm',
+    style: 'padding:2px 8px;font-size:11px;margin-top:4px',
+    onclick: (e) => { e.preventDefault(); openVarPicker({ target: 'body' }); },
+  }, '+ Insert variable');
+  bodyRow.append(bodyEditor);
+  bodyRow.append(bodyInsert);
+  modal.append(bodyRow);
+
+  // 7. Preview pane
+  modal.append(h('label', { style: 'font-size:12px;color:var(--text2);margin-top:6px;display:block' }, 'Preview (variables resolved against live data)'));
+  const preview = h('div', { style: 'margin-top:4px;padding:8px 10px;background:var(--bg3);border-radius:4px;font-size:12px;max-height:220px;overflow-y:auto' });
+  preview.innerHTML = '<div style="color:var(--text3);font-style:italic">Preview will render here…</div>';
+  modal.append(preview);
+
+  // 8. Action row
+  const actions = h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px' });
+  const cancelBtn = h('button', { className: 'btn-outline', onclick: () => overlay.remove() }, 'Cancel');
+  const sendBtn = h('button', { className: 'btn', onclick: doSend }, 'Send');
+  actions.append(cancelBtn);
+  actions.append(sendBtn);
+  modal.append(actions);
+
+  overlay.append(modal);
+  document.body.append(overlay);
+
+  // First preview render
+  schedulePreview();
+
+  // ─── helpers (closure) ───────────────────────────────────────────
+
+  function serializeBody() {
+    // Walk a clone of the editor; replace chip spans with `{{key}}` text
+    // tokens. The browser already produces reasonable HTML for line breaks
+    // (<br>, <div>) — we just rewrite chip nodes and pass everything else
+    // through to the server which resolves the tokens against live data.
+    const clone = bodyEditor.cloneNode(true);
+    clone.querySelectorAll('span.evar[data-var]').forEach(span => {
+      const txt = document.createTextNode('{{' + span.dataset.var + '}}');
+      span.parentNode.replaceChild(txt, span);
+    });
+    return clone.innerHTML;
+  }
+
+  // Debounced preview render via /api/email-compose/preview
+  let previewTimer = null;
+  function schedulePreview() {
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(updatePreview, 300);
+  }
+  async function updatePreview() {
+    try {
+      const r = await api('/email-compose/preview', {
+        method: 'POST',
+        body: JSON.stringify({
+          context, ids,
+          raw_subject: subjInp.value,
+          raw_body_html: serializeBody(),
+        }),
+      });
+      preview.innerHTML = '';
+      preview.append(h('div', { style: 'font-family:monospace;font-size:11px;color:var(--text2);margin-bottom:6px' }, 'Subject: ' + r.subject));
+      const body = h('div');
+      body.innerHTML = r.html;
+      preview.append(body);
+    } catch (e) {
+      preview.innerHTML = '<div style="color:var(--red)">Preview error: ' + (e.message || e) + '</div>';
+    }
+  }
+
+  // Variable picker dropdown — fixed-positioned under the trigger button.
+  function openVarPicker({ target }) {
+    const existing = document.querySelector('.compose-var-picker');
+    if (existing) existing.remove();
+
+    const vars = catalog.vars || [];
+    const picker = h('div', {
+      className: 'compose-var-picker',
+      style: 'position:fixed;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.3);max-height:260px;overflow-y:auto;width:340px;z-index:1000',
+    });
+    const search = h('input', { type: 'text', placeholder: 'Filter…', style: 'width:100%;margin-bottom:6px;padding:4px 6px;font-size:12px' });
+    picker.append(search);
+    const list = h('div');
+    picker.append(list);
+
+    function renderList(filter) {
+      list.innerHTML = '';
+      const f = (filter || '').toLowerCase();
+      const matches = vars.filter(v => !f || v.label.toLowerCase().includes(f) || v.key.toLowerCase().includes(f));
+      if (matches.length === 0) {
+        list.append(h('div', { style: 'color:var(--text3);font-size:12px;padding:6px' }, 'No matches.'));
+        return;
+      }
+      matches.forEach(v => {
+        const row = h('div', {
+          style: 'display:flex;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:3px;cursor:pointer;font-size:12px',
+          onmouseenter: e => { e.currentTarget.style.background = 'var(--bg3)'; },
+          onmouseleave: e => { e.currentTarget.style.background = 'transparent'; },
+          onclick: () => { insertVar(target, v); picker.remove(); schedulePreview(); },
+        });
+        row.append(h('span', { style: 'font-weight:600' }, v.label));
+        row.append(h('span', { style: 'color:var(--text3);font-family:monospace;font-size:11px' }, v.sample == null ? '' : String(v.sample).substring(0, 40)));
+        list.append(row);
+      });
+    }
+    search.addEventListener('input', () => renderList(search.value));
+    renderList('');
+
+    const anchor = target === 'subject' ? subjInsert : bodyInsert;
+    const rect = anchor.getBoundingClientRect();
+    picker.style.left = rect.left + 'px';
+    picker.style.top = (rect.bottom + 4) + 'px';
+    document.body.append(picker);
+    setTimeout(() => search.focus(), 10);
+
+    const closeOnOutsideClick = (e) => {
+      if (!picker.contains(e.target) && e.target !== anchor) {
+        picker.remove();
+        document.removeEventListener('mousedown', closeOnOutsideClick);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', closeOnOutsideClick), 0);
+  }
+
+  function insertVar(target, v) {
+    if (target === 'subject') {
+      // Plain text insertion at cursor in <input>
+      const inp = subjInp;
+      const start = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
+      const end = inp.selectionEnd != null ? inp.selectionEnd : inp.value.length;
+      const before = inp.value.substring(0, start);
+      const after = inp.value.substring(end);
+      const token = `{{${v.key}}}`;
+      inp.value = before + token + after;
+      const pos = start + token.length;
+      inp.setSelectionRange(pos, pos);
+      inp.focus();
+      return;
+    }
+    // Body: insert a chip at the saved caret (or end if no saved caret).
+    bodyEditor.focus();
+    if (savedRange && bodyEditor.contains(savedRange.startContainer)) {
+      const sel0 = window.getSelection();
+      sel0.removeAllRanges();
+      sel0.addRange(savedRange);
+    }
+    const chip = makeChip(v);
+    const sel = window.getSelection();
+    if (sel.rangeCount && bodyEditor.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(chip);
+      const space = document.createTextNode(' ');
+      chip.parentNode.insertBefore(space, chip.nextSibling);
+      range.setStartAfter(space);
+      range.setEndAfter(space);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      savedRange = range.cloneRange();
+    } else {
+      bodyEditor.appendChild(chip);
+      bodyEditor.appendChild(document.createTextNode(' '));
+    }
+  }
+
+  function makeChip(v) {
+    const span = document.createElement('span');
+    span.className = 'evar';
+    span.contentEditable = 'false';
+    span.dataset.var = v.key;
+    span.textContent = v.label;
+    span.style.cssText = 'background:var(--primary);color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600;margin:0 2px;display:inline-block;cursor:default;user-select:none';
+    return span;
+  }
+
+  // Replace `{{key}}` markers in pre-fill HTML with chip spans for keys
+  // that exist in the catalog. Unknown keys pass through as literal text
+  // (still resolve at send time via legacy-alias substitution).
+  function chipifyHtml(rawHtml, vars) {
+    if (!rawHtml) return '';
+    const byKey = new Map(vars.map(v => [v.key, v]));
+    return rawHtml.replace(/\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}/g, (m, key) => {
+      const v = byKey.get(key);
+      if (!v) return m;
+      const lbl = String(v.label).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<span class="evar" contenteditable="false" data-var="${v.key}" style="background:var(--primary);color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600;margin:0 2px;display:inline-block;cursor:default;user-select:none">${lbl}</span>`;
+    });
+  }
+
+  async function doSend() {
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Sending…';
+    const payload = {
+      override_subject: subjInp.value,
+      override_body_html: serializeBody(),
+      override_to: toRecipients.map(r => r.email).filter(Boolean),
+      extra_cc: ccInp.value.split(',').map(s => s.trim()).filter(Boolean),
+    };
+    try {
+      const result = await onSend(payload);
+      overlay.remove();
+      if (result) {
+        const parts = [];
+        if (result.sent_to != null) parts.push(`sent to ${result.sent_to}`);
+        if (result.delivered != null) parts.push(`delivered ${result.delivered}`);
+        if (result.failed != null) parts.push(`failed ${result.failed}`);
+        if (result.cc) parts.push(`cc ${result.cc}`);
+        alert(parts.length > 0 ? 'Sent — ' + parts.join(', ') : 'Sent.');
+      } else {
+        alert('Sent.');
+      }
+    } catch (e) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+      alert('Send failed: ' + (e.message || e));
+    }
+  }
+}
+
 async function showEmailDayPickerPopup() {
   const overlay = h('div',{className:'modal-overlay'});
   const modal = h('div',{className:'modal',style:'max-width:520px;max-height:80vh;display:flex;flex-direction:column'});
@@ -6265,6 +6618,29 @@ async function showEmailDayPickerPopup() {
 
       row.append(h('span',{style:'font-size:12px;color:var(--text3);white-space:nowrap;flex-shrink:0'},
         `${p._dayCrew} worker${p._dayCrew===1?'':'s'}`));
+
+      // Per-row compose button — pops the compose modal scoped to this
+      // single project + date so the user can tweak the email before it
+      // fires. The bulk Send button at the bottom still works for "send
+      // all without composing"; this is the "send one with custom text"
+      // path.
+      const composeBtn = h('button', {
+        className: 'btn-outline btn-sm',
+        style: 'padding:2px 8px;font-size:11px;flex-shrink:0',
+        title: 'Compose & send to this project only',
+        onclick: () => {
+          composeEmailModal({
+            context: 'email_day_to_staff',
+            ids: { project_id: p.id, date: forDate },
+            title: `Email — ${p.primary_number || p.name} on ${forDate}`,
+            onSend: (payload) => api(`/projects/${p.id}/email-day`, {
+              method: 'POST',
+              body: JSON.stringify({ date: forDate, ...payload }),
+            }),
+          });
+        },
+      }, '✉ Compose');
+      row.append(composeBtn);
 
       listWrap.append(row);
     });
@@ -6833,13 +7209,24 @@ async function renderExports(main) {
 
   function scheduleActions(s, refresh) {
     const wrap = h('div',{style:'display:flex;gap:4px;flex-wrap:wrap'});
-    wrap.append(h('button',{className:'btn btn-sm',style:'padding:2px 8px',title:'Run now',onclick:async()=>{
-      try {
-        const r = await api('/exports/schedules/'+s.id+'/trigger',{method:'POST'});
-        const extra = r.skipped ? ', skipped ' + r.skipped : '';
-        alert('Run complete: ' + r.rowCount + ' rows · delivered ' + r.delivered + ', failed ' + r.failed + extra);
-        refresh();
-      } catch (e) { alert(e.message); }
+    wrap.append(h('button',{className:'btn btn-sm',style:'padding:2px 8px',title:'Compose & run now — opens the compose modal so you can tweak To / CC / Subject / Body before sending',onclick:()=>{
+      composeEmailModal({
+        context: 'saved_export_run',
+        ids: { saved_export_id: s.id },
+        title: `Run "${s.name}"`,
+        onSend: (payload) => api('/exports/schedules/' + s.id + '/trigger', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }).then(r => {
+          // Surface the export-run stats in the modal's "Sent" alert. The
+          // modal's default uses generic delivery counts; for saved
+          // exports we also have rowCount/skipped that's worth showing.
+          const extra = r.skipped ? `, skipped ${r.skipped}` : '';
+          alert(`Run complete: ${r.rowCount} rows · delivered ${r.delivered}, failed ${r.failed}${extra}`);
+          refresh();
+          return null; // suppress modal's own alert (we already showed one)
+        }),
+      });
     }},'▶'));
     wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:'Edit',onclick:()=>showScheduleModal({mode:'edit',existing:s,onSaved:refresh})},'✎'));
     wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:s.enabled?'Pause':'Resume',onclick:async()=>{

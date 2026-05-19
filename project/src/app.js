@@ -24,6 +24,7 @@ const inventoryRoutes = require('./routes/inventory');
 const exportRoutes = require('./routes/exports');
 const savedExportRoutes = require('./routes/savedExports');
 const emailTemplateRoutes = require('./routes/emailTemplates');
+const emailComposeRoutes = require('./routes/emailCompose');
 const adminRoutes = require('./routes/admin');
 const inboxRoutes = require('./routes/inbox');
 const equipmentRoutes = require('./routes/equipment');
@@ -103,6 +104,10 @@ app.use('/api/exports', exportRoutes);
 // Email templates mount FIRST for the same prefix-ordering reason.
 app.use('/api/admin/email-templates', emailTemplateRoutes);
 app.use('/api/admin', adminRoutes);
+
+// Email compose — variable catalog + preview for the compose modal that
+// sits in front of email-day and saved-export-trigger.
+app.use('/api/email-compose', emailComposeRoutes);
 
 // Centralized document inboxes (timesheets, invoices, purchase orders)
 app.use('/api/inbox', inboxRoutes);

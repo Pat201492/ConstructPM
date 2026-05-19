@@ -1001,7 +1001,7 @@ router.put('/:id/day-notes/:date', authorize('projects:update'), async (req, res
 
 router.post('/:id/email-day', authorize('projects:update'), async (req, res, next) => {
   try {
-    const { date } = req.body || {};
+    const { date, override_subject, override_body_html, override_to, extra_cc } = req.body || {};
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: 'date (YYYY-MM-DD) is required' });
     }
@@ -1030,6 +1030,83 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
     // a PM can push the day through even when staffing is incomplete. The
     // picker UI surfaces staffing warnings; this endpoint stays permissive.
 
+    const NotificationService = require('../services/NotificationService');
+
+    // Compose path: any of override_{subject,body_html,to} or extra_cc is
+    // present. Caller (the compose modal) already composed the final
+    // text — we just resolve {{var}} tokens against live data and send.
+    //
+    // Default path (no overrides): existing template-driven fan-out where
+    // each worker gets their own individual email rendered from the
+    // email_day_to_staff template. Unchanged from the pre-compose version.
+    const composed = !!(override_subject || override_body_html
+      || (Array.isArray(override_to) && override_to.length > 0)
+      || (Array.isArray(extra_cc) && extra_cc.length > 0));
+
+    if (composed) {
+      const EmailComposeService = require('../services/EmailComposeService');
+      const vars = await EmailComposeService.getVars(
+        'email_day_to_staff',
+        { project_id: project.id, date },
+      );
+
+      // Resolve raw composed strings (with {{var}} tokens) against live data.
+      // Subject is NOT HTML-escaped (it lands in a Subject header). Body IS.
+      const subject = override_subject
+        ? EmailComposeService.resolveWithVars(override_subject, vars, { escape: false })
+        : `Schedule: ${vars['project.primary_number'] || project.name} on ${date}`;
+      const html = override_body_html
+        ? EmailComposeService.resolveWithVars(override_body_html, vars, { escape: true })
+        : `<p>Schedule update for ${vars['project.primary_number'] || project.name} on ${date}.</p>`;
+
+      const toList = Array.isArray(override_to) && override_to.length > 0
+        ? override_to
+        : crew.map(c => c.email).filter(Boolean);
+      const ccList = Array.isArray(extra_cc) ? extra_cc : [];
+
+      // Still fan in-app notifications out to each assigned worker — they
+      // should see the activity in their app even when the email recipient
+      // list was overridden. Plain-text body derived by stripping HTML
+      // tags + collapsing whitespace; good enough for an in-app preview.
+      const plain = String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      await Promise.all(crew.map(c =>
+        NotificationService.send({
+          userId: c.worker_id,
+          category: 'actionable',
+          priority: 'normal',
+          title: subject,
+          body: plain,
+          referenceType: 'project',
+          referenceId: project.id,
+          actionUrl: `/#/project-detail?id=${project.id}`,
+          channels: ['in_app'],
+        }).catch(err => console.error('[email-day:in_app] worker', c.worker_id, err.message))
+      ));
+
+      // Email: single bulk send to all addresses + CCs. Logged so any
+      // surprise recipient list can be traced post-hoc.
+      let emailResult = null;
+      if (toList.length > 0) {
+        emailResult = await NotificationService.sendEmail({
+          to: toList,
+          cc: ccList.length > 0 ? ccList : undefined,
+          subject,
+          html,
+        });
+      }
+      console.log(`[email-day:composed] project=${project.id} date=${date} to=${toList.length} cc=${ccList.length} result=${emailResult?.provider || 'skipped'}`);
+      return res.json({
+        composed: true,
+        sent_to: toList.length,
+        cc: ccList.length,
+        in_app_to: crew.length,
+        date,
+      });
+    }
+
+    // ── Default (template-driven) path ─────────────────────────────────
+    const EmailTemplateService = require('../services/EmailTemplateService');
+
     const dayNoteRow = await db('project_day_notes')
       .where({ project_id: project.id, work_date: date })
       .first();
@@ -1044,9 +1121,6 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
     // result for every worker. Day notes are the ONLY notes channel that
     // goes to the field — project notes are intentionally EXCLUDED
     // (they're PM/accounting payment-tracking notes, not field comms).
-    const NotificationService = require('../services/NotificationService');
-    const EmailTemplateService = require('../services/EmailTemplateService');
-
     const tplVars = {
       project_number: primaryNumber,
       project_name: project.name,

@@ -238,7 +238,18 @@ router.post('/:id/trigger', [param('id').isUUID()], async (req, res, next) => {
     const { row, err } = await fetchOwnedOrAdmin(req, req.params.id);
     if (err) return res.status(err.status).json({ error: err.msg });
 
-    const result = await SavedExportRunner.run(row);
+    // Optional compose-modal overrides. Each is plain JSON; the runner
+    // validates / falls back to defaults on its own. Strings may contain
+    // `{{var}}` tokens that the runner resolves via EmailComposeService
+    // against the live saved-export context.
+    const overrides = {
+      override_subject:   typeof req.body?.override_subject   === 'string' ? req.body.override_subject   : undefined,
+      override_body_html: typeof req.body?.override_body_html === 'string' ? req.body.override_body_html : undefined,
+      override_to:        Array.isArray(req.body?.override_to) ? req.body.override_to : undefined,
+      extra_cc:           Array.isArray(req.body?.extra_cc)    ? req.body.extra_cc    : undefined,
+    };
+
+    const result = await SavedExportRunner.run(row, overrides);
     res.json(result);
   } catch (err) { next(err); }
 });

@@ -1,67 +1,136 @@
-# Plan: "Weekend only" scheduler option
+# Plan — Email compose module (Send To / CC / Subject / Body, with variables)
 
-Branch: `feat/weekend-only-schedule`
-Worktree: `Project_Management_Software_weekend_only/`
+> Branch: `add-email-compose-module`
+> Approved: Pat, 2026-05-18
 
 ## Why
 
-Some projects (tenant-occupied retail spaces, weekend pour windows, etc.) can
-only be worked Saturday + Sunday. Today the scheduler defaults to M-F and lets
-the user *add* Sat and/or Sun on top. There is no way to say "only weekends" —
-M-F is hardcoded as always-working.
+Currently two surfaces fire emails without giving the user a chance to tweak the
+recipient / wording before send:
+- **Scheduler → Email Day to Staff**: pick date + project, click → instantly
+  fans out the templated body to the assigned crew.
+- **Saved & Scheduled Exports → Run now**: instantly runs the export and emails
+  the CSV using the `saved_export_email` template.
 
-A "Weekend only" mode reverses the M-F default: when set, the project schedules
-on Sat + Sun and skips Mon-Fri.
+Pat wants a **compose modal** to sit in between the "user clicks send" and the
+actual fan-out. Four editable fields: **Send To**, **CC**, **Subject**, **Body**.
+Each field can mix free text with `{{variable}}` placeholders pulled from a
+context-aware catalog. The template provides the pre-fill; per-send edits
+are one-off and don't write back to the template.
 
-## Scope
+Equipment-ticket pickup is the eventual third invocation site — deferred to a
+follow-up PR because it lives in an in-flight branch (`feat/ticket-ready-for-
+pickup`) that hasn't merged yet. The compose modal is built as a reusable
+`composeEmailModal(context, onSend)` function so the pickup branch can wire it
+in trivially once it lands.
 
-In scope:
-- New `weekend_only` boolean column on `project_schedule_overrides` (default false).
-- Backend: GET `/projects/:id/schedule` returns it; PATCH accepts it; `/projects/scheduled-list` selects it.
-- Frontend: a third checkbox on the Schedule edit modal — "Weekend only (Sat + Sun, skip Mon-Fri)". When checked, the Sat/Sun checkboxes are visually disabled (they're irrelevant — both days work).
-- Frontend: working-day computation in both `renderSchedule` (Schedule tab) and `renderScheduler` (Scheduler grid) honors the flag.
-
-Out of scope:
-- Replacing the current Sat/Sun toggles with a radio-button mode picker.
-- Per-day arbitrary working-day patterns (e.g. "Tue + Thu only").
-- Worker-assignment-side filtering — `worker_assignments` stays independent of working-day rules.
-
-## File-by-file
+## What changes
 
 | File | Change |
-|------|--------|
-| `project/migrations/20260518_015_project_weekend_only.js` | NEW — adds `weekend_only` boolean column on `project_schedule_overrides` (default false). Idempotent up/down. |
-| `project/src/routes/projects.js` | (a) `/scheduled-list` selects `project_schedule_overrides.weekend_only`. (b) GET `/:id/schedule` returns it (default false). (c) PATCH `/:id/schedule` accepts `weekend_only` and upserts it. |
-| `project/public/index.html` | (a) `renderSchedule` working-day check at ~5167 honors weekend_only. (b) Same change in `renderScheduler` at ~5543. (c) Edit modal at ~5289: add "Weekend only" checkbox; change handler disables Sat/Sun checkboxes when active. (d) PATCH body includes `weekend_only`. (e) Legend text updated. |
+|---|---|
+| `src/services/EmailComposeService.js` (new) | `getCatalog(context)` returns the variable list for the given send context. `resolve(context, rawString)` substitutes `{{var}}` tokens at send time using live data. Reuses `exportMetadata.js` for `projects` source variables; adds context-specific extras (crew names, day note, dates, etc.) |
+| `src/routes/emailCompose.js` (new) | `GET /api/email-compose/catalog?context=…&...ids` → `{vars: [{key,label,sample,emailable}], defaults: {to, subject, body_html}}`. `POST /api/email-compose/preview` body `{context, ids, raw_subject, raw_body_html}` → resolved subject + html with `unresolved` array. Authenticated, no extra permission gate (caller's existing route gates the parent send). |
+| `src/app.js` | Mount the new routes |
+| `src/routes/projects.js` `POST /:id/email-day` | Accept optional `override_subject`, `override_body_html`, `override_to` (array of emails), `extra_cc` (array of emails) in body. When provided, use them in place of the template render; substitute via EmailComposeService for the right context. Existing `{ date }`-only callers keep working unchanged. |
+| `src/routes/savedExports.js` `POST /:id/trigger` | Same override surface. SavedExportRunner gains an `overrides` arg; uses it instead of EmailTemplateService.render when present. |
+| `src/services/SavedExportRunner.js` | Threads `overrides` through `run(savedExport, overrides)`. When set, uses `EmailComposeService.resolve` over raw strings; otherwise falls back to current `EmailTemplateService.render('saved_export_email', vars)` path. |
+| `public/index.html` — `composeEmailModal(opts)` (new top-level function) | Modal with To / CC / Subject / Body. Body uses a `contentEditable` div. Variables insert as styled non-editable chips. Live preview pane below the body renders resolved output. Send button calls `opts.onSend({override_to, extra_cc, override_subject, override_body_html})` with the raw (variable-tokens-not-resolved) strings — backend resolves on send. |
+| `public/index.html` — Email Day to Staff popup | Click-to-fire is replaced with click-to-compose. The existing `showEmailDayPickerPopup()` row-click now opens `composeEmailModal({context:'email_day_to_staff', ids:{project_id, date}, ...})` instead of immediately firing. On Send the modal callback POSTs to `/email-day` with overrides. |
+| `public/index.html` — Saved Exports Run button | Same swap. Click "▶ Run" → compose modal → POST to `/exports/schedules/:id/trigger` with overrides. |
 
-## Logic
+## Variable catalog shape
 
-```js
-const weekendOnly = !!p.weekend_only;
-const isWorking = weekendOnly
-  ? (dow === 0 || dow === 6)
-  : (dow >= 1 && dow <= 5)
-    || (dow === 0 && !!p.works_sunday)
-    || (dow === 6 && !!p.works_saturday);
+```
+{
+  vars: [
+    { key: 'project.name',             label: 'Project: Name',         sample: 'Substation Switchgear Upgrade', emailable: false },
+    { key: 'project.primary_number',   label: 'Project: Primary #',     sample: 'S26-1342.1',                    emailable: false },
+    { key: 'pm.first_name',            label: 'PM: First Name',         sample: 'Sarah',                         emailable: false },
+    { key: 'pm.email',                 label: 'PM: Email',              sample: 'sarah@company.com',             emailable: true  },
+    { key: 'customer.name',            label: 'Customer: Name',         sample: 'Acme Industrial',               emailable: false },
+    { key: 'customer_contact.email',   label: 'Customer Contact: Email',sample: 'contact@acme.com',              emailable: true  },
+    { key: 'date',                     label: 'Date',                   sample: '2026-05-18',                    emailable: false },
+    { key: 'crew.count',               label: 'Crew: Count',            sample: 5,                               emailable: false },
+    { key: 'crew.names',               label: 'Crew: Names (comma)',    sample: 'Mike T, Sarah K, …',            emailable: false },
+    { key: 'day.note',                 label: 'Day Note',               sample: 'Bring extra PPE',               emailable: false },
+  ],
+  defaults: {
+    to: [{ id: 'uuid-1', email: 'mike@company.com', label: 'Mike T' }, …],
+    subject: 'Schedule: {{project.primary_number}} on {{date}}',
+    body_html: '<p>You\'re on the crew for …</p>',
+  },
+}
 ```
 
-When `weekend_only` is true, `works_saturday` / `works_sunday` are ignored. The
-columns are kept (not zeroed) so toggling weekend-only off restores prior
-Sat/Sun preferences without data loss.
+`emailable: true` controls which vars appear when picking for the **Send To** or
+**CC** fields (those need to resolve to email addresses; `{{project.name}}` in
+the To field would be nonsense).
+
+## Context shapes (v1)
+
+| Context | IDs in URL | What's in the catalog |
+|---|---|---|
+| `email_day_to_staff` | `project_id`, `date` | project columns + joined customer/location/PM/contact columns + `date` + `crew.{count,names,emails}` + `day.note` |
+| `saved_export_run` | `saved_export_id` | template defaults (`{{name}}`, `{{source}}`, `{{rowCount}}`, `{{whenUtc}}`) + the saved export's owner email |
+| `equipment_ticket_pickup` | (deferred) | not exposed in v1 — added when the pickup branch lands |
+
+## Send-site contract (backend overrides)
+
+The two send routes (`/email-day`, `/exports/schedules/:id/trigger`) gain four
+optional body fields:
+
+```
+{
+  override_to?:        [email_string, …]   // replaces the auto-resolved recipient list
+  extra_cc?:           [email_string, …]   // added as CC headers
+  override_subject?:   string              // raw, may contain {{var}} tokens
+  override_body_html?: string              // raw, may contain {{var}} tokens
+}
+```
+
+When any override is present, the route resolves the raw strings via
+`EmailComposeService.resolve(context, raw)` before sending. When absent, the
+existing template-driven path runs unchanged — old callers stay working.
+
+## Chip rendering / serialization
+
+- Body editor: `<div contenteditable="true">` (NOT `<textarea>` — we need rich content for chips).
+- Chips: `<span class="evar" contenteditable="false" data-var="project.name">Project: Name</span>` plus a trailing space.
+- Insertion: typing `{{` opens an autocomplete dropdown of matching variables. Selection inserts the chip at the cursor.
+- Backspace immediately after a chip removes the chip as a unit.
+- Send-time serialization: walk the editor's DOM. For text nodes → `textContent`. For `<br>` → `\n`. For `<p>` boundaries → `\n\n`. For chip spans → `{{data-var}}`. Result is the raw template-style string the backend can resolve.
+- Live preview pane: renders the body with chips replaced by their sample/resolved values inline. Updates on every input change.
 
 ## Risks considered
 
-- **`project_length_days` interpretation:** length is in *working* days. A 10-day weekend-only project spans 5 weeks. Loop safety cap (`length * 10 + 7`) is plenty.
-- **scheduled-list SQL prefilter:** the SQL multiplies length by 2 as a coarse pre-filter (M-F gives 7/5 ratio, but the multiplier covers it). For weekend-only the ratio is 7/2 = 3.5, so the `× 2` window is too tight. Workaround: bump the multiplier when any project is weekend-only — or, simpler for v1, accept that a weekend-only project starting far enough out could be excluded from the calendar list. Frontend per-cell membership still works for visible projects. Note for follow-up.
-- **Three-state UI confusion:** Sat/Sun checkboxes still render when weekend_only is on. We disable them to make the override obvious. If still confusing, follow-up with a radio mode picker.
-- **Schema rollback:** the down migration drops the column. Any data in it is lost on rollback, matching existing migration style.
+1. **Variable resolution against unverified data**. `EmailComposeService.resolve` queries based on the IDs in the URL. A user with access to the parent send route also has access to the underlying data, so this doesn't open a new information-disclosure path. Auth gate sits on the send route, not on `/api/email-compose/*`.
+2. **Override fields could be used to email arbitrary recipients**. `override_to` and `extra_cc` accept raw email strings. We don't restrict them to known users — the existing route already allows the PM to email "the crew" which is similarly trust-the-caller. Mitigation: log the resolved final recipient list on every send for audit.
+3. **HTML in `override_body_html`**. Saved as-is and sent through `NotificationService.sendEmail`. Same XSS-via-self model as the existing template editor — admins (and now PMs for their own sends) can author HTML that lands in inboxes. Acceptable; the surface is logged-in trusted users.
+4. **ContentEditable browser quirks**. Cursor placement after chip insertion, paste handling (paste pastes plain text not HTML), Firefox vs Chromium differences. Building defensively but accepting some rough edges in v1.
+5. **The `feat/ticket-ready-for-pickup` branch**. Not modified by this PR. When it lands, it'll need to call `composeEmailModal({context:'equipment_ticket_pickup', …})` itself — but the modal will already exist, so the integration is one function call. No coordination drift expected.
+
+## What does NOT change
+
+- The `email_templates` table or the Admin → Email Templates editor
+- The existing template-driven send paths when no override is supplied (`saved_export_email`, `email_day_to_staff` templates stay active as the pre-fill source)
+- Auth / permission gates on `/email-day` or `/exports/schedules/:id/trigger`
+- `EmailTemplateService.render` semantics
+- `NotificationService.send` / `sendEmail` signatures
+
+## Out of scope (follow-ups)
+
+- Wiring into equipment ticket pickup (waits for `feat/ticket-ready-for-pickup`)
+- A "Save this composed body as a new template" button
+- Per-send audit log table (just logged today)
+- Inline image / attachment support in the body editor
+- Rich-text formatting (bold/italic/links) — body is plain text + chips + `\n`-breaks in v1
 
 ## Verification
 
-1. `docker compose up -d` from `project/`.
-2. Open the app, dev login (`admin@company.com` / `ChangeMe123!`).
-3. Open Schedule tab calendar, click a project card → edit pop-up.
-4. Toggle "Weekend only" → Save → calendar re-renders with cards only on Sat + Sun cells.
-5. Untoggle → reverts to M-F (plus any Sat/Sun overrides).
-6. `GET /api/projects/:id/schedule` round-trips `weekend_only`.
-7. Same visual check on the Scheduler grid tab.
+1. `GET /api/email-compose/catalog?context=email_day_to_staff&project_id=X&date=Y` → returns the variable list with sample values resolved from project X
+2. `POST /api/email-compose/preview` with a raw subject `'Schedule: {{project.primary_number}}'` → returns `'Schedule: S26-1342.1'`
+3. Compose modal opens on Email Day row click; type `{{` → autocomplete shows variables; pick one → chip inserted; preview pane shows resolved
+4. Send button → POSTs to `/email-day` with `override_subject` / `override_body_html` containing raw `{{var}}` tokens
+5. Backend resolves via EmailComposeService and sends; logs the final recipient list
+6. Saved Export "Run now" → modal opens with the saved_export_email template pre-filled; Send completes the run with the (possibly edited) body
+7. Email-parked dev mode: same status='failed' result with the helpful per-recipient reason, but the *send pipeline* now flows through compose+override successfully

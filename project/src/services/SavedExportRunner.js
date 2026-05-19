@@ -28,9 +28,19 @@ const ExportBuilder = require('./ExportBuilder');
 const ExportService = require('./ExportService');
 const NotificationService = require('./NotificationService');
 const EmailTemplateService = require('./EmailTemplateService');
+const EmailComposeService = require('./EmailComposeService');
 
 const SavedExportRunner = {
-  async run(savedExport) {
+  /**
+   * @param {object} savedExport  Row from saved_exports
+   * @param {object} [overrides]  Optional compose-modal overrides:
+   *   { override_subject?, override_body_html?, override_to?, extra_cc? }.
+   *   When any are present, the runner takes the "composed" path: resolves
+   *   {{var}} tokens against live data + sends one bulk email (to all
+   *   override_to addresses, with extra_cc on the CC line) instead of the
+   *   default per-recipient template-driven fan-out.
+   */
+  async run(savedExport, overrides = {}) {
     let status = 'failed';
     let errorMsg = null;
     const deliveryErrors = [];
@@ -64,51 +74,113 @@ const SavedExportRunner = {
       tmpPath = path.join(os.tmpdir(), `saved-export-${savedExport.id}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.csv`);
       await fs.writeFile(tmpPath, csv, 'utf8');
 
-      // 4. Recipients — look up live (skip deactivated)
-      const recipientIds = normalizeJsonArray(savedExport.recipients);
-      const recipients = recipientIds.length === 0 ? [] : await db('users')
-        .whereIn('id', recipientIds)
-        .where('active', true)
-        .select('id', 'email');
-
-      skipped = recipientIds.length - recipients.length;
-
       const filename = `${slug(savedExport.name)}_${ymd()}.csv`;
-      // Subject + body come from the admin-editable `saved_export_email`
-      // template (see migration 20260518_011_email_templates). Rendered
-      // once; reused for every recipient.
-      const rendered = await EmailTemplateService.render('saved_export_email', {
-        name: savedExport.name,
-        source: savedExport.source,
-        rowCount,
-        whenUtc: new Date().toISOString().replace('T', ' ').replace(/\..*$/, ''),
-      });
-      const subject = rendered.subject;
-      const html = rendered.html;
+      const whenUtc = new Date().toISOString().replace('T', ' ').replace(/\..*$/, '');
 
-      for (const r of recipients) {
-        if (!r.email) {
-          failed++;
-          deliveryErrors.push(`${r.id}: no email on file`);
-          continue;
+      const composed = !!(overrides.override_subject || overrides.override_body_html
+        || (Array.isArray(overrides.override_to) && overrides.override_to.length > 0)
+        || (Array.isArray(overrides.extra_cc) && overrides.extra_cc.length > 0));
+
+      if (composed) {
+        // Compose path: resolve user-edited subject/body against live data
+        // + send ONE bulk email (To: override_to OR saved recipients;
+        // CC: extra_cc). No per-recipient fan-out — the user explicitly
+        // composed a single message for a chosen audience.
+        const composeVars = await EmailComposeService.getVars(
+          'saved_export_run',
+          { saved_export_id: savedExport.id },
+          { rowCount, whenUtc },
+        );
+        const subject = overrides.override_subject
+          ? EmailComposeService.resolveWithVars(overrides.override_subject, composeVars, { escape: false })
+          : EmailComposeService.resolveWithVars(`[ConstructPM] {{name}}`, composeVars, { escape: false });
+        const html = overrides.override_body_html
+          ? EmailComposeService.resolveWithVars(overrides.override_body_html, composeVars, { escape: true })
+          : (await EmailTemplateService.render('saved_export_email', composeVars)).html;
+
+        // Recipients: explicit override list OR fall back to the saved
+        // recipient_ids (resolved to active emails).
+        let toList;
+        if (Array.isArray(overrides.override_to) && overrides.override_to.length > 0) {
+          toList = overrides.override_to.map(s => String(s).trim()).filter(Boolean);
+        } else {
+          const recipientIds = normalizeJsonArray(savedExport.recipients);
+          const recipients = recipientIds.length === 0 ? [] : await db('users')
+            .whereIn('id', recipientIds).where('active', true).whereNotNull('email').select('email');
+          skipped = recipientIds.length - recipients.length;
+          toList = recipients.map(r => r.email).filter(Boolean);
         }
-        try {
-          const res = await NotificationService.sendEmailWithAttachment({
-            to: r.email,
-            subject,
-            html,
-            filePath: tmpPath,
-            filename,
-            contentType: 'text/csv',
-          });
-          if (res && res.delivered) delivered++;
-          else {
+        const ccList = Array.isArray(overrides.extra_cc)
+          ? overrides.extra_cc.map(s => String(s).trim()).filter(Boolean)
+          : [];
+
+        if (toList.length === 0) {
+          status = 'no_recipients';
+          await this._stamp(savedExport.id, status, null);
+          return { delivered: 0, failed: 0, skipped, rowCount, status };
+        }
+
+        const res = await NotificationService.sendEmailWithAttachment({
+          to: toList,
+          cc: ccList.length > 0 ? ccList : undefined,
+          subject,
+          html,
+          filePath: tmpPath,
+          filename,
+          contentType: 'text/csv',
+        });
+        if (res && res.delivered) {
+          delivered = toList.length;
+        } else {
+          failed = toList.length;
+          if (res && res.reason) deliveryErrors.push(res.reason);
+        }
+      } else {
+        // ── Default (template-driven) path: per-recipient fan-out ────
+        const recipientIds = normalizeJsonArray(savedExport.recipients);
+        const recipients = recipientIds.length === 0 ? [] : await db('users')
+          .whereIn('id', recipientIds)
+          .where('active', true)
+          .select('id', 'email');
+
+        skipped = recipientIds.length - recipients.length;
+
+        // Subject + body come from the admin-editable `saved_export_email`
+        // template (see migration 20260518_011_email_templates). Rendered
+        // once; reused for every recipient.
+        const rendered = await EmailTemplateService.render('saved_export_email', {
+          name: savedExport.name,
+          source: savedExport.source,
+          rowCount,
+          whenUtc,
+        });
+        const subject = rendered.subject;
+        const html = rendered.html;
+
+        for (const r of recipients) {
+          if (!r.email) {
             failed++;
-            if (res && res.reason) deliveryErrors.push(`${r.email}: ${res.reason}`);
+            deliveryErrors.push(`${r.id}: no email on file`);
+            continue;
           }
-        } catch (err) {
-          failed++;
-          deliveryErrors.push(`${r.email}: ${err.message}`);
+          try {
+            const res = await NotificationService.sendEmailWithAttachment({
+              to: r.email,
+              subject,
+              html,
+              filePath: tmpPath,
+              filename,
+              contentType: 'text/csv',
+            });
+            if (res && res.delivered) delivered++;
+            else {
+              failed++;
+              if (res && res.reason) deliveryErrors.push(`${r.email}: ${res.reason}`);
+            }
+          } catch (err) {
+            failed++;
+            deliveryErrors.push(`${r.email}: ${err.message}`);
+          }
         }
       }
 
