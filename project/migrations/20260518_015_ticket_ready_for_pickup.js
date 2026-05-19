@@ -1,25 +1,42 @@
 /**
- * NO-OP STUB.
+ * Migration: add "ready for pickup" stamp to ticket_project.
  *
- * This filename is recorded in the knex_migrations table on Pat's dev
- * database, but the original source was never committed and the file
- * was deleted locally. Without this stub, `knex migrate:latest` refuses
- * to start ("migration directory is corrupt — files missing").
+ * Inserts a manual gate between /fill (status='filled' — shop has scanned
+ * the items) and /pickup (status='picked_up' — crew has physically taken
+ * them). Clicking the new "Ready for Pick-up" button calls
+ * POST /equipment-tickets/:n/ready, which:
+ *   - flips ticket_project.status to 'ready_for_pickup'
+ *   - stamps ready_at = now()
+ *   - stamps ready_by = req.user.id
+ *   - fires a NotificationService.send to created_by + admins so the
+ *     requestor gets an in-app + email notification (email is no-op log
+ *     in dev until EMAIL_PROVIDER + a verified domain are configured —
+ *     same path every other notification in the app uses).
  *
- * The stub exists only so Knex sees the filename and treats it as
- * already-applied. It performs no schema changes.
+ * Status is varchar(20), not a true enum, so no enum migration is
+ * needed — just the two new audit columns.
  *
- * If you later figure out what this migration was supposed to do
- * (something related to a "ready for pickup" state on equipment
- * tickets, based on the filename), replace this stub with the real
- * migration and delete the matching row from knex_migrations so it
- * runs against fresh databases.
+ * IDEMPOTENT.
  */
 
-exports.up = async function () {
-  // intentionally empty
+exports.up = async function (knex) {
+  const hasReadyAt = await knex.schema.hasColumn('ticket_project', 'ready_at');
+  const hasReadyBy = await knex.schema.hasColumn('ticket_project', 'ready_by');
+  if (hasReadyAt && hasReadyBy) return;
+
+  await knex.schema.alterTable('ticket_project', (t) => {
+    if (!hasReadyAt) t.timestamp('ready_at').nullable();
+    if (!hasReadyBy) t.uuid('ready_by').references('id').inTable('users').onDelete('SET NULL');
+  });
+  console.log('  ✅ ticket_project: ready_at / ready_by added');
 };
 
-exports.down = async function () {
-  // intentionally empty
+exports.down = async function (knex) {
+  const hasReadyAt = await knex.schema.hasColumn('ticket_project', 'ready_at');
+  const hasReadyBy = await knex.schema.hasColumn('ticket_project', 'ready_by');
+  if (!hasReadyAt && !hasReadyBy) return;
+  await knex.schema.alterTable('ticket_project', (t) => {
+    if (hasReadyBy) t.dropColumn('ready_by');
+    if (hasReadyAt) t.dropColumn('ready_at');
+  });
 };

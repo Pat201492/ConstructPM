@@ -23,6 +23,7 @@ const express = require('express');
 const authenticate = require('../middleware/authenticate');
 const { authorize } = require('../middleware/authorize');
 const db = require('../config/database');
+const NotificationService = require('../services/NotificationService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -384,6 +385,83 @@ router.post('/:ticketNumber/confirm-picked', authorize('equipment:read'), async 
     res.json({ ok: true, ticket_number: tn, pdf_path: pdfPath });
   } catch (err) { next(err); }
 });
+
+// ═══════════════════════════════════════════════════════════
+// MARK READY FOR PICK-UP → notify requestor (in-app + email)
+// ═══════════════════════════════════════════════════════════
+//
+// Manual gate between /fill (shop has scanned items in) and /pickup
+// (crew has physically taken them). Clicking the button on the active-
+// ticket card flips status to 'ready_for_pickup', stamps ready_at +
+// ready_by, and sends a notification to the user who created the ticket
+// plus all admins. Email delivery rides on NotificationService.send —
+// in dev (no EMAIL_PROVIDER) it logs; in prod it ships via SES/SendGrid
+// with zero code change. See [[email-provider-status]] memory.
+router.post('/:ticketNumber/ready', authorize('equipment:read'), async (req, res, next) => {
+  try {
+    const tn = parseInt(req.params.ticketNumber, 10);
+    const project = await db('ticket_project').where('ticket_number', tn).first();
+    if (!project) return res.status(404).json({ error: 'Ticket not found' });
+
+    // Require something filled first — clicking Ready on an empty ticket
+    // would mean "notify the requestor we've staged nothing," which is
+    // never the intent.
+    if (project.status === 'open') {
+      return res.status(409).json({ error: 'Ticket has no scanned items yet — fill it before marking ready' });
+    }
+    if (project.status === 'picked_up') {
+      return res.status(409).json({ error: 'Ticket already picked up' });
+    }
+
+    const readyAt = new Date();
+    await db('ticket_project').where('ticket_number', tn).update({
+      status: 'ready_for_pickup',
+      ready_at: readyAt,
+      ready_by: req.user.id,
+      updated_at: db.fn.now(),
+    });
+
+    // Fire-and-forget notification — never block the status flip on a
+    // delivery hiccup. Email channel is the trigger Pat asked for; the
+    // body summarises the ticket so the requestor knows what's ready.
+    notifyTicketReady({ project, ticketNumber: tn })
+      .catch(err => console.error('[ticket ready] Notification failed:', err.message));
+
+    res.json({ ok: true, ticket_number: tn, ready_at: readyAt.toISOString() });
+  } catch (err) { next(err); }
+});
+
+async function notifyTicketReady({ project, ticketNumber }) {
+  const recipients = new Set();
+  if (project.created_by) recipients.add(project.created_by);
+  const admins = await db('users').where({ role: 'admin', active: true }).pluck('id');
+  admins.forEach(id => recipients.add(id));
+  if (recipients.size === 0) return;
+
+  const locationLine = [project.location_name, project.location_address]
+    .filter(Boolean).join(' — ');
+  const title = `Ticket #${ticketNumber} ready for pick-up`;
+  const bodyParts = [
+    `Equipment for project ${project.project_number || '—'} is staged and ready.`,
+    project.pickup_person ? `Pick-up: ${project.pickup_person}.` : null,
+    locationLine ? `Location: ${locationLine}.` : null,
+  ].filter(Boolean);
+
+  await NotificationService.send({
+    userIds: [...recipients],
+    type: 'equipment_ticket_ready',
+    title,
+    body: bodyParts.join(' '),
+    category: 'actionable',
+    priority: 'high',
+    // actionUrl intentionally omitted — SPA doesn't have a deep-link
+    // route to a specific ticket modal yet; in-app users will see the
+    // notification and click into the Active Tickets board. The ticket
+    // number is in the title/body so email recipients can still locate it.
+    referenceType: 'equipment_ticket',
+    referenceId: project.id, // uuid — notifications.reference_id is uuid; ticket # rides in actionUrl
+  });
+}
 
 // ═══════════════════════════════════════════════════════════
 // MARK PICKED UP  → side effects + archive + PDF + delete live rows
