@@ -175,6 +175,8 @@ const NotificationService = {
       await this._sendViaSendGrid(email, notification);
     } else if (provider === 'ses' && process.env.SES_REGION) {
       await this._sendViaSES(email, notification);
+    } else if (provider === 'gmail' && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      await this._sendViaGmail(email, notification);
     } else {
       // Log email that would be sent (dev mode)
       console.log(`[NotificationService] EMAIL (dev): To: ${email} | Subject: ${notification.title} | Body: ${notification.body}`);
@@ -244,6 +246,45 @@ const NotificationService = {
     });
 
     await client.send(command);
+  },
+
+  /**
+   * Build a nodemailer Gmail SMTP transport using an app password. Shared
+   * by all three Gmail branches (_sendViaGmail, sendEmail, sendEmailWithAttachment).
+   * Lazy-requires nodemailer so installs without the dep still boot.
+   */
+  _getGmailTransport() {
+    const nodemailer = require('nodemailer');
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD,
+      },
+    });
+  },
+
+  /**
+   * Send notification email via Gmail SMTP (app password). Used as a
+   * domain-less dev path: the From: header is the GMAIL_USER address,
+   * which is DKIM-signed by Google and aligns with DMARC.
+   */
+  async _sendViaGmail(to, notification) {
+    const transport = this._getGmailTransport();
+    await transport.sendMail({
+      from: process.env.EMAIL_FROM || process.env.GMAIL_USER,
+      to,
+      subject: notification.title,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px;">
+          <h2 style="color: #1F4E79;">${notification.title}</h2>
+          <p>${notification.body}</p>
+          ${notification.action_url ? `<p><a href="${notification.action_url}" style="color: #2E75B6;">View Details →</a></p>` : ''}
+          <hr style="border: 1px solid #eee;">
+          <p style="color: #999; font-size: 12px;">Construction PM Platform</p>
+        </div>
+      `,
+    });
   },
 
   /**
@@ -338,6 +379,23 @@ const NotificationService = {
       }
     }
 
+    if (provider === 'gmail' && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      try {
+        const transport = this._getGmailTransport();
+        await transport.sendMail({
+          from: process.env.EMAIL_FROM || process.env.GMAIL_USER,
+          to: toList.join(', '),
+          cc: ccList.length > 0 ? ccList.join(', ') : undefined,
+          subject,
+          html,
+          attachments: [{ filename, content: fileBuf, contentType: ct }],
+        });
+        return { delivered: true, provider: 'gmail' };
+      } catch (err) {
+        return { delivered: false, provider: 'gmail', reason: err.message };
+      }
+    }
+
     // No provider configured — log and report back so the API can tell
     // the caller the email step was skipped (vs. silently lost).
     const ccLabel = ccList.length > 0 ? ` | CC: ${ccList.join(', ')}` : '';
@@ -406,6 +464,23 @@ const NotificationService = {
         return { delivered: true, provider: 'ses' };
       } catch (err) {
         return { delivered: false, provider: 'ses', reason: err.message };
+      }
+    }
+
+    if (provider === 'gmail' && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      try {
+        const transport = this._getGmailTransport();
+        await transport.sendMail({
+          from: process.env.EMAIL_FROM || process.env.GMAIL_USER,
+          to: toList.join(', '),
+          cc: ccList.length > 0 ? ccList.join(', ') : undefined,
+          subject,
+          html: html || '',
+          text: text || undefined,
+        });
+        return { delivered: true, provider: 'gmail' };
+      } catch (err) {
+        return { delivered: false, provider: 'gmail', reason: err.message };
       }
     }
 
