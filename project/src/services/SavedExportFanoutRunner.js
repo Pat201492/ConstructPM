@@ -220,6 +220,11 @@ const SavedExportFanoutRunner = {
               whenUtc,
             }, { sectionCount: adminSections.length });
 
+            // Same shape as the per-user loop: accumulate per-format
+            // results into a single batch outcome so the admin counts as
+            // exactly one slot in delivered/failed, regardless of how
+            // many formats the run was configured for.
+            let adminDelivered = 0, adminFailed = 0;
             for (const att of attachments) {
               const res = await NotificationService.sendEmailWithAttachment({
                 to: adminEmails,
@@ -229,8 +234,9 @@ const SavedExportFanoutRunner = {
                 filename: att.filename,
                 contentType: att.contentType,
               });
-              if (res && res.delivered) delivered++; else { failed++; if (res?.reason) errors.push(`admin (${att.format}): ${res.reason}`); }
+              if (res && res.delivered) adminDelivered++; else { adminFailed++; if (res?.reason) errors.push(`admin (${att.format}): ${res.reason}`); }
             }
+            if (adminFailed === 0) delivered++; else failed++;
           } catch (err) {
             failed++;
             errors.push(`admin_consolidation: ${err.message}`);
