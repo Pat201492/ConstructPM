@@ -175,6 +175,10 @@ const SavedExportFanoutRunner = {
           .whereIn('id', adminUserIds).where('active', true).whereNotNull('email').select('email');
         const adminEmails = adminUsers.map(u => u.email);
         if (adminEmails.length === 0) {
+          // Surface the misconfig as a failure so the run reports as
+          // partial (not 'ok'). Admin asked for a consolidated copy and
+          // didn't get one — status must reflect that.
+          failed++;
           errors.push('admin_consolidation: no active admin recipients with email — consolidation skipped');
         } else {
           try {

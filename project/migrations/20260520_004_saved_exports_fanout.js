@@ -40,6 +40,17 @@ exports.up = async function (knex) {
     t.jsonb('admin_recipients').notNullable().defaultTo('[]');
     t.jsonb('export_formats').notNullable().defaultTo(JSON.stringify(['csv']));
   });
+
+  // Postgres applies NOT NULL DEFAULT to existing rows automatically, but
+  // run an explicit backfill so the column values are visibly canonical
+  // and tolerant of any deployment that ran the alter as a separate step.
+  // Idempotent on a freshly-migrated DB.
+  await knex('saved_exports')
+    .whereNull('export_formats')
+    .update({ export_formats: JSON.stringify(['csv']) });
+  await knex('saved_exports')
+    .whereNull('admin_recipients')
+    .update({ admin_recipients: JSON.stringify([]) });
 };
 
 exports.down = async function (knex) {

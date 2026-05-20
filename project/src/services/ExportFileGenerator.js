@@ -225,9 +225,16 @@ function truncate(s, maxChars) {
 
 function formatCell(v) {
   if (v == null) return '';
-  if (v instanceof Date) return v.toISOString().split('T')[0];
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
+  let s;
+  if (v instanceof Date) s = v.toISOString().split('T')[0];
+  else if (typeof v === 'object') s = JSON.stringify(v);
+  else s = String(v);
+  // Strip control chars (\n, \r, \t, \v, \f and other ASCII < 32) before
+  // PDF rendering. pdf-lib's drawText renders newlines literally which
+  // collides with our row-position layout (rest of the row spills to the
+  // next line, header gets clipped). Replace with single space so the
+  // cell still reads correctly when truncated.
+  return s.replace(/[\x00-\x1F\x7F]+/g, ' ');
 }
 
 module.exports = ExportFileGenerator;
