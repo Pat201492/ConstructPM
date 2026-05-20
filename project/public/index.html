@@ -7626,6 +7626,33 @@ async function renderExports(main) {
       document.createTextNode('Enabled (scheduled runs fire when checked; manual trigger always works)'),
     ]));
 
+    // ── Per-export email config (PR #18) ─────────────────────
+    // Scheduled exports diverge from other email triggers: each row
+    // carries its own subject + body inline (not a global template).
+    // Leaving the fields blank falls back to the legacy
+    // saved_export_email template (PR #19 wiring).
+    const emailFold = h('details',{style:'margin-bottom:14px;border:1px solid var(--border);border-radius:4px;padding:8px 10px'});
+    emailFold.append(h('summary',{style:'cursor:pointer;font-size:12px;font-weight:600'},'Email subject + body (optional)'));
+    emailFold.append(h('p',{style:'color:var(--text2);font-size:11px;margin:6px 0 8px'},
+      'Customise the delivery email for this export. {{name}}, {{source}}, {{rowCount}}, {{whenUtc}} are substituted at send time. Leave blank to use the system default.'));
+    const emailSubj = h('input',{type:'text',value:initial.email_subject||'',placeholder:'[ConstructPM] {{name}}',
+      style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px;margin-bottom:6px'});
+    const emailBody = h('textarea',{
+      style:'width:100%;min-height:120px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
+      placeholder:'<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>'});
+    emailBody.value = initial.email_body_html || '';
+    const emailBodyText = h('textarea',{
+      style:'width:100%;min-height:80px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
+      placeholder:'Plain-text fallback for clients that don’t render HTML (optional).'});
+    emailBodyText.value = initial.email_body_text || '';
+    emailFold.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-bottom:2px'},'Subject'));
+    emailFold.append(emailSubj);
+    emailFold.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-bottom:2px'},'Body (HTML)'));
+    emailFold.append(emailBody);
+    emailFold.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin:6px 0 2px'},'Body (plain text — optional fallback)'));
+    emailFold.append(emailBodyText);
+    modal.append(emailFold);
+
     const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end'});
     actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
     actions.append(h('button',{className:'btn',onclick:async()=>{
@@ -7641,6 +7668,9 @@ async function renderExports(main) {
         cron: cronInp.value.trim() || null,
         recipients: [...selectedRecipients],
         enabled: enabledCb.checked,
+        email_subject: emailSubj.value.trim() || null,
+        email_body_html: emailBody.value.trim() || null,
+        email_body_text: emailBodyText.value.trim() || null,
       };
       try {
         if (mode === 'edit') {
@@ -9585,10 +9615,72 @@ async function adminEmailTemplates(c) {
       } catch (e) { alert(e.message); }
     }},'Preview'));
     right.append(actions);
+
+    if (TEMPLATES_WITH_STATIC_RECIPIENTS.has(tpl.key)) {
+      right.append(renderRecipientsSection(tpl));
+    }
   }
 
   renderList();
   renderEditor();
+}
+
+// Keys where the trigger merges admin-configured static recipients with
+// the auto-resolved modular recipients (PR #19). Other templates either
+// resolve recipients entirely at the trigger site (email_day_to_staff)
+// or carry their recipient list on the row itself (saved_export_email).
+const TEMPLATES_WITH_STATIC_RECIPIENTS = new Set(['ticket_ready_pickup', 'bid_project_quote']);
+
+function renderRecipientsSection(tpl) {
+  const section = h('div',{style:'margin-top:18px;padding:12px;border:1px solid var(--border);border-radius:4px'});
+  section.append(h('h4',{style:'margin:0 0 8px'},'Static recipients'));
+  section.append(h('p',{style:'color:var(--text2);font-size:11px;margin:0 0 10px'},
+    'These addresses are added on every send of this template, on top of the recipients the trigger auto-resolves. Emails are sent to the union of both lists.'));
+
+  const emailsLbl = h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:4px'},'Static emails (comma-separated)');
+  const emailsInp = h('input',{type:'text',style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px'});
+  section.append(emailsLbl); section.append(emailsInp);
+
+  const ccLbl = h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:8px'},'CC emails (comma-separated)');
+  const ccInp = h('input',{type:'text',style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px'});
+  section.append(ccLbl); section.append(ccInp);
+
+  const userLbl = h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:8px'},
+    'Static user IDs (one UUID per line — recipient resolved live from users.email at send time)');
+  const userTA = h('textarea',{style:'width:100%;min-height:60px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px'});
+  section.append(userLbl); section.append(userTA);
+
+  const status = h('div',{style:'margin-top:6px;font-size:11px;color:var(--text2);min-height:14px'});
+  section.append(status);
+
+  async function load() {
+    try {
+      const r = await api('/admin/email-templates/'+tpl.key+'/recipients');
+      const rec = r.recipients || { static_emails:[], static_user_ids:[], cc_emails:[] };
+      emailsInp.value = (rec.static_emails || []).join(', ');
+      ccInp.value = (rec.cc_emails || []).join(', ');
+      userTA.value = (rec.static_user_ids || []).join('\n');
+      status.textContent = '';
+    } catch (e) { status.textContent = 'Load failed: ' + e.message; }
+  }
+  load();
+
+  const actions = h('div',{style:'display:flex;gap:8px;margin-top:10px'});
+  actions.append(h('button',{className:'btn',onclick:async()=>{
+    try {
+      const parseList = (s) => s.split(/[\s,]+/).map(x=>x.trim()).filter(Boolean);
+      const payload = {
+        static_emails: parseList(emailsInp.value),
+        cc_emails: parseList(ccInp.value),
+        static_user_ids: parseList(userTA.value),
+      };
+      await api('/admin/email-templates/'+tpl.key+'/recipients',{method:'PATCH',body:JSON.stringify(payload)});
+      status.textContent = 'Saved.';
+    } catch (e) { status.textContent = 'Save failed: ' + e.message; }
+  }},'Save recipients'));
+  section.append(actions);
+
+  return section;
 }
 
 function showEmailPreviewModal(preview, tpl) {
@@ -10005,7 +10097,7 @@ async function renderSettings(main) {
   main.append(h('div',{className:'page-header'},[h('h1',{},'Settings')]));
 
   // Tab bar
-  const tabs=['Column Presets','Bid Templates','Profile'];
+  const tabs=['Column Presets','Bid Templates','Profile','My Email Preferences'];
   const tabBar=h('div',{style:'display:flex;gap:8px;margin-bottom:20px'});
   const content=h('div');
   tabs.forEach((t,i)=>{
@@ -10016,6 +10108,7 @@ async function renderSettings(main) {
         case 'Column Presets': renderPresetSettings(content); break;
         case 'Bid Templates': await renderTemplateSettings(content); break;
         case 'Profile': await renderProfileSettings(content); break;
+        case 'My Email Preferences': await renderMyEmailPreferences(content); break;
       }
     }},t));
   });
@@ -10188,6 +10281,118 @@ async function renderProfileSettings(c) {
       $('#sp-old').value='';$('#sp-new').value='';$('#sp-confirm').value='';
     }catch(e){alert(e.message)}
   }},'Change Password'));
+}
+
+// ═══════════════════════════════════════════════════════════
+// MY EMAIL PREFERENCES
+// ═══════════════════════════════════════════════════════════
+// Per-user override of admin-default email templates. The caller can
+// edit subject / body for any of the templates listed in
+// USER_OVERRIDABLE_TEMPLATES and the override is used in place of the
+// admin default whenever the trigger sends an email on the caller's
+// behalf (PR #19 wiring). Override fields left blank fall back to the
+// admin row, so editing just the subject is fine.
+const USER_OVERRIDABLE_TEMPLATES = [
+  { key: 'bid_project_quote',   label: 'Quick Project — quote to PM' },
+  { key: 'ticket_ready_pickup', label: 'Equipment ticket — ready for pickup' },
+  { key: 'email_day_to_staff',  label: 'Scheduler — Email Day to Staff' },
+];
+
+async function renderMyEmailPreferences(c) {
+  c.innerHTML = '';
+  c.append(h('h3',{style:'margin-bottom:8px'},'My Email Preferences'));
+  c.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:16px'},
+    'Customise the subject and body for emails the system sends on your behalf. Empty fields fall back to the admin default. {{variable}} placeholders are substituted at send time.'));
+
+  for (const tplMeta of USER_OVERRIDABLE_TEMPLATES) {
+    c.append(await renderOverridePanel(tplMeta));
+  }
+}
+
+async function renderOverridePanel({ key, label }) {
+  const panel = h('div',{style:'margin-bottom:18px;padding:14px;border:1px solid var(--border);border-radius:6px'});
+  panel.append(h('h4',{style:'margin:0 0 6px'}, label));
+  panel.append(h('div',{style:'font-size:11px;color:var(--text3);margin-bottom:8px;font-family:JetBrains Mono,monospace'}, key));
+
+  const status = h('div',{style:'min-height:14px;font-size:11px;color:var(--text2);margin-bottom:6px'});
+  panel.append(status);
+
+  // Load template (for variable hints) + caller's existing override.
+  let tpl = null, override = null;
+  try {
+    const r = await api('/email-templates/' + key);
+    tpl = r ? r.template : null;
+  } catch (e) { /* template missing or load failed — variable hints hidden */ }
+  try {
+    const r = await api('/email-templates/' + key + '/my-override');
+    override = r.override;
+  } catch (e) { status.textContent = 'Load failed: ' + e.message; }
+
+  panel.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:4px'},'Subject (leave blank to inherit admin default)'));
+  const subjInp = h('input',{type:'text',style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px;margin-bottom:6px'});
+  subjInp.value = (override && override.subject != null) ? override.subject : '';
+  panel.append(subjInp);
+
+  panel.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:6px'},'Body HTML (leave blank to inherit admin default)'));
+  const bodyTA = h('textarea',{style:'width:100%;min-height:160px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical'});
+  bodyTA.value = (override && override.body_html != null) ? override.body_html : '';
+  panel.append(bodyTA);
+
+  panel.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:6px'},'Body plain text (leave blank to inherit admin default — optional multipart fallback)'));
+  const bodyTextTA = h('textarea',{style:'width:100%;min-height:80px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical'});
+  bodyTextTA.value = (override && override.body_text != null) ? override.body_text : '';
+  panel.append(bodyTextTA);
+
+  if (tpl && tpl.variables && tpl.variables.length > 0) {
+    const varsPanel = h('div',{style:'margin-top:8px;padding:6px 8px;background:var(--bg3);border-radius:4px;font-size:11px'});
+    varsPanel.append(h('div',{style:'font-weight:700;margin-bottom:4px'},'Available variables'));
+    tpl.variables.forEach(v => {
+      const row = h('div',{style:'display:flex;gap:8px;align-items:baseline;padding:1px 0'});
+      row.append(h('code',{style:'background:var(--bg);padding:1px 6px;border-radius:2px;color:var(--primary);min-width:180px'}, '{{' + v.key + '}}'));
+      row.append(h('span',{style:'color:var(--text2)'}, v.label || ''));
+      varsPanel.append(row);
+    });
+    panel.append(varsPanel);
+  }
+
+  const actions = h('div',{style:'display:flex;gap:8px;margin-top:10px'});
+  actions.append(h('button',{className:'btn',onclick:async()=>{
+    const subj = subjInp.value;
+    const body = bodyTA.value;
+    const bodyText = bodyTextTA.value;
+    const patch = {
+      subject: subj.length > 0 ? subj : null,
+      body_html: body.length > 0 ? body : null,
+      body_text: bodyText.length > 0 ? bodyText : null,
+    };
+    try {
+      const r = await api('/email-templates/' + key + '/my-override', { method:'PATCH', body: JSON.stringify(patch) });
+      override = r.override;
+      status.textContent = 'Saved.';
+    } catch (e) { status.textContent = 'Save failed: ' + e.message; }
+  }},'Save override'));
+  actions.append(h('button',{className:'btn-outline',onclick:async()=>{
+    try {
+      const preview = await api('/email-templates/' + key + '/preview', { method:'POST', body: JSON.stringify({
+        subject: subjInp.value || null,
+        body_html: bodyTA.value || null,
+        body_text: bodyTextTA.value || null,
+      })});
+      showEmailPreviewModal(preview, { name: label, key });
+    } catch (e) { status.textContent = 'Preview failed: ' + e.message; }
+  }},'Preview'));
+  actions.append(h('button',{className:'btn-outline',style:'margin-left:auto',onclick:async()=>{
+    if (!confirm('Clear your override and use the admin default for "' + label + '"?')) return;
+    try {
+      await api('/email-templates/' + key + '/my-override', { method:'DELETE' });
+      subjInp.value = ''; bodyTA.value = ''; bodyTextTA.value = '';
+      override = null;
+      status.textContent = 'Override cleared.';
+    } catch (e) { status.textContent = 'Clear failed: ' + e.message; }
+  }},'Reset to default'));
+  panel.append(actions);
+
+  return panel;
 }
 
 // ═══════════════════════════════════════════════════════════
