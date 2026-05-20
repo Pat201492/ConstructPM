@@ -29,6 +29,7 @@ const ExportService = require('./ExportService');
 const NotificationService = require('./NotificationService');
 const EmailTemplateService = require('./EmailTemplateService');
 const EmailComposeService = require('./EmailComposeService');
+const SavedExportFanoutRunner = require('./SavedExportFanoutRunner');
 
 const SavedExportRunner = {
   /**
@@ -41,6 +42,13 @@ const SavedExportRunner = {
    *   default per-recipient template-driven fan-out.
    */
   async run(savedExport, overrides = {}) {
+    // PR #20: delegate to the fan-out runner when the row is configured
+    // for it. Compose-modal overrides are ignored in fan-out mode (per
+    // the runner's own comment).
+    if (savedExport.fanout_mode === 'per_user_role') {
+      return SavedExportFanoutRunner.run(savedExport, overrides);
+    }
+
     let status = 'failed';
     let errorMsg = null;
     const deliveryErrors = [];

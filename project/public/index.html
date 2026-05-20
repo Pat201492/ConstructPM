@@ -7653,6 +7653,107 @@ async function renderExports(main) {
     emailFold.append(emailBodyText);
     modal.append(emailFold);
 
+    // ── Fan-out config (PR #20) ──────────────────────────────
+    // Optional: send the report scoped per-user (one filtered run per
+    // user with role X) plus an admin-consolidated copy. Sources without
+    // userScopeColumns hide the section entirely.
+    const fanoutFold = h('details',{style:'margin-bottom:14px;border:1px solid var(--border);border-radius:4px;padding:8px 10px'});
+    fanoutFold.append(h('summary',{style:'cursor:pointer;font-size:12px;font-weight:600'},'Send a scoped copy per user (optional)'));
+    fanoutFold.append(h('p',{style:'color:var(--text2);font-size:11px;margin:6px 0 8px'},
+      'Each user with the chosen role receives a copy of this export filtered to rows where the selected column matches their user id. Optionally a consolidated copy goes to the admin team.'));
+
+    const fanoutEnabledCb = h('input',{type:'checkbox',style:'width:auto'});
+    fanoutEnabledCb.checked = initial.fanout_mode === 'per_user_role';
+    fanoutFold.append(h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:8px;cursor:pointer'},[
+      fanoutEnabledCb, document.createTextNode('Enable per-user fan-out'),
+    ]));
+
+    const fanoutBody = h('div',{style:'display:'+(fanoutEnabledCb.checked?'block':'none')});
+    fanoutEnabledCb.onchange = () => { fanoutBody.style.display = fanoutEnabledCb.checked ? 'block' : 'none'; };
+
+    const roleLbl = h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-top:4px'},'Role to fan out to');
+    const roleSel = h('select',{style:'width:100%;font-size:12px;margin-bottom:6px'});
+    const colLbl = h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-top:4px'},'Filter column (which row column matches each user)');
+    const colSel = h('select',{style:'width:100%;font-size:12px;margin-bottom:6px'});
+    fanoutBody.append(roleLbl); fanoutBody.append(roleSel);
+    fanoutBody.append(colLbl); fanoutBody.append(colSel);
+
+    const formatsRow = h('div',{style:'margin-top:8px;font-size:12px'});
+    formatsRow.append(h('div',{style:'color:var(--text2);font-size:11px;margin-bottom:4px'},'File formats to generate (applies to per-user + admin consolidated)'));
+    const initialFormats = Array.isArray(initial.export_formats) && initial.export_formats.length > 0
+      ? new Set(initial.export_formats) : new Set(['csv']);
+    const fmtBoxes = {};
+    ['csv', 'xlsx', 'pdf'].forEach(f => {
+      const box = h('label',{style:'display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:pointer'});
+      const cb = h('input',{type:'checkbox',style:'width:auto'});
+      cb.checked = initialFormats.has(f);
+      fmtBoxes[f] = cb;
+      box.append(cb); box.append(document.createTextNode(f.toUpperCase()));
+      formatsRow.append(box);
+    });
+    fanoutBody.append(formatsRow);
+
+    const adminCb = h('input',{type:'checkbox',style:'width:auto'});
+    adminCb.checked = !!initial.admin_consolidation;
+    fanoutBody.append(h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;margin-top:10px;cursor:pointer'},[
+      adminCb, document.createTextNode('Also send a consolidated copy (every user\'s section combined) to admin recipients below'),
+    ]));
+
+    const adminRecipsContainer = h('div',{style:'max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg);margin-top:4px'});
+    fanoutBody.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-top:4px'},'Admin consolidated recipients'));
+    fanoutBody.append(adminRecipsContainer);
+    const selectedAdminRecipients = new Set(initial.admin_recipients || []);
+
+    fanoutFold.append(fanoutBody);
+    modal.append(fanoutFold);
+
+    // Populate role + column dropdowns when source is set (initial.source
+    // is already known by the time the modal renders).
+    (async () => {
+      if (!initial.source) {
+        roleSel.append(h('option',{value:''},'(pick a source first)'));
+        colSel.append(h('option',{value:''},'(pick a source first)'));
+        fanoutEnabledCb.disabled = true;
+        return;
+      }
+      try {
+        const cfg = await api('/exports/builder/fanout-config?source=' + encodeURIComponent(initial.source));
+        const cols = cfg.userScopeColumns || [];
+        const roles = cfg.roles || [];
+        if (cols.length === 0) {
+          colSel.append(h('option',{value:''},'(this source has no user-scope columns)'));
+          fanoutEnabledCb.disabled = true;
+        } else {
+          cols.forEach(c => colSel.append(h('option',{value:c.col}, c.label + ' — ' + c.col)));
+          if (initial.fanout_filter_column) colSel.value = initial.fanout_filter_column;
+        }
+        roles.forEach(r => roleSel.append(h('option',{value:r}, r)));
+        if (initial.fanout_role) roleSel.value = initial.fanout_role;
+        else {
+          // Preselect a defaultRole if the chosen column declares one.
+          const def = cols.find(c => c.col === colSel.value);
+          if (def && def.defaultRole && roles.includes(def.defaultRole)) roleSel.value = def.defaultRole;
+        }
+      } catch (e) {
+        roleSel.append(h('option',{value:''},'(failed to load roles)'));
+      }
+      const users = await getEmailPicker();
+      adminRecipsContainer.innerHTML = '';
+      if (users.length === 0) {
+        adminRecipsContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
+      } else {
+        users.forEach(u => {
+          const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
+          const cb = h('input',{type:'checkbox',style:'width:auto'});
+          cb.checked = selectedAdminRecipients.has(u.id);
+          cb.onchange = () => { if (cb.checked) selectedAdminRecipients.add(u.id); else selectedAdminRecipients.delete(u.id); };
+          row.append(cb);
+          row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
+          adminRecipsContainer.append(row);
+        });
+      }
+    })();
+
     const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end'});
     actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
     actions.append(h('button',{className:'btn',onclick:async()=>{
@@ -7660,6 +7761,13 @@ async function renderExports(main) {
       if (!name) return alert('Name is required');
       if (!initial.source) return alert('No source — pick a source + columns in the builder below first');
       if (!(initial.columns && initial.columns.length > 0)) return alert('No columns selected');
+      const fanoutOn = fanoutEnabledCb.checked && !fanoutEnabledCb.disabled;
+      const chosenFormats = ['csv','xlsx','pdf'].filter(f => fmtBoxes[f].checked);
+      if (fanoutOn) {
+        if (!roleSel.value) return alert('Pick a role to fan out to');
+        if (!colSel.value) return alert('Pick a filter column');
+        if (chosenFormats.length === 0) return alert('Pick at least one file format');
+      }
       const payload = {
         name,
         source: initial.source,
@@ -7671,6 +7779,12 @@ async function renderExports(main) {
         email_subject: emailSubj.value.trim() || null,
         email_body_html: emailBody.value.trim() || null,
         email_body_text: emailBodyText.value.trim() || null,
+        fanout_mode: fanoutOn ? 'per_user_role' : 'none',
+        fanout_role: fanoutOn ? roleSel.value : null,
+        fanout_filter_column: fanoutOn ? colSel.value : null,
+        admin_consolidation: fanoutOn ? adminCb.checked : false,
+        admin_recipients: fanoutOn ? [...selectedAdminRecipients] : [],
+        export_formats: fanoutOn && chosenFormats.length > 0 ? chosenFormats : ['csv'],
       };
       try {
         if (mode === 'edit') {

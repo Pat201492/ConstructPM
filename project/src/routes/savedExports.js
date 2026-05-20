@@ -135,6 +135,55 @@ function validatePayload(req, { partial = false } = {}) {
     out[k] = b[k];
   }
 
+  // Fan-out config (PR #20).
+  const effectiveSource = b.source || out.source;
+  if (b.fanout_mode !== undefined) {
+    if (b.fanout_mode !== 'none' && b.fanout_mode !== 'per_user_role') {
+      errs.push('fanout_mode must be "none" or "per_user_role"');
+    } else {
+      out.fanout_mode = b.fanout_mode;
+    }
+  }
+  if (b.fanout_role !== undefined) {
+    if (b.fanout_role !== null && typeof b.fanout_role !== 'string') errs.push('fanout_role must be a string or null');
+    else out.fanout_role = b.fanout_role;
+  }
+  if (b.fanout_filter_column !== undefined) {
+    if (b.fanout_filter_column === null) {
+      out.fanout_filter_column = null;
+    } else if (typeof b.fanout_filter_column !== 'string') {
+      errs.push('fanout_filter_column must be a string or null');
+    } else if (effectiveSource) {
+      const def = M.findUserScopeColumn(effectiveSource, b.fanout_filter_column);
+      if (!def) errs.push(`fanout_filter_column "${b.fanout_filter_column}" is not a declared user-scope column for source "${effectiveSource}"`);
+      else out.fanout_filter_column = b.fanout_filter_column;
+    } else {
+      out.fanout_filter_column = b.fanout_filter_column;
+    }
+  }
+  if (b.admin_consolidation !== undefined) {
+    if (typeof b.admin_consolidation !== 'boolean') errs.push('admin_consolidation must be a boolean');
+    else out.admin_consolidation = b.admin_consolidation;
+  }
+  if (b.admin_recipients !== undefined) {
+    if (!Array.isArray(b.admin_recipients)) errs.push('admin_recipients must be an array of user UUIDs');
+    else out.admin_recipients = JSON.stringify(b.admin_recipients);
+  }
+  if (b.export_formats !== undefined) {
+    if (!Array.isArray(b.export_formats)) errs.push('export_formats must be an array');
+    else {
+      const allowed = new Set(['csv', 'xlsx', 'pdf']);
+      const invalid = b.export_formats.filter(f => !allowed.has(f));
+      if (invalid.length > 0) errs.push(`invalid export_formats: ${invalid.join(', ')}`);
+      else if (b.export_formats.length === 0) errs.push('export_formats must include at least one of csv/xlsx/pdf');
+      else out.export_formats = JSON.stringify([...new Set(b.export_formats)]);
+    }
+  }
+  if (!partial && out.fanout_mode === 'per_user_role') {
+    if (!out.fanout_role) errs.push('fanout_role is required when fanout_mode = per_user_role');
+    if (!out.fanout_filter_column) errs.push('fanout_filter_column is required when fanout_mode = per_user_role');
+  }
+
   return { out, errs };
 }
 
@@ -148,6 +197,8 @@ function serialize(row, { includeOwner = false } = {}) {
     columns: typeof row.columns === 'string' ? JSON.parse(row.columns) : row.columns,
     filters: typeof row.filters === 'string' ? JSON.parse(row.filters) : (row.filters || {}),
     recipients: typeof row.recipients === 'string' ? JSON.parse(row.recipients) : (row.recipients || []),
+    admin_recipients: typeof row.admin_recipients === 'string' ? JSON.parse(row.admin_recipients) : (row.admin_recipients || []),
+    export_formats: typeof row.export_formats === 'string' ? JSON.parse(row.export_formats) : (row.export_formats || ['csv']),
   };
   if (!includeOwner) delete out.owner_user_id;
   return out;

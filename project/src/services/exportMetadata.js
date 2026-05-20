@@ -119,6 +119,10 @@ const PROJECT_NUMBER_COLUMNS = [
 //                       enrichment for this source.
 //   dateColumn?       — SQL ref used by start_date/end_date filters
 //   defaultSort?      — SQL ref used as default ORDER BY
+//   userScopeColumns? — array of { key, label, col, defaultRole? } describing
+//                       the user-id columns a scheduled export can fan out on.
+//                       `col` is the SQL ref. `defaultRole` (optional) seeds
+//                       the UI dropdown for which role to fan out to.
 
 const SOURCES = {
   projects: {
@@ -152,6 +156,10 @@ const SOURCES = {
     projectIdColumn: 'projects.id',
     dateColumn: 'projects.start_date',
     defaultSort: 'projects.name',
+    userScopeColumns: [
+      { key: 'pm',         label: 'PM',      col: 'projects.pm_id',      defaultRole: 'project_manager' },
+      { key: 'created_by', label: 'Creator', col: 'projects.created_by', defaultRole: 'admin' },
+    ],
   },
 
   bids: {
@@ -185,6 +193,10 @@ const SOURCES = {
     },
     dateColumn: 'bids.bid_date',
     defaultSort: 'bids.bid_date',
+    userScopeColumns: [
+      { key: 'estimator',  label: 'Estimator', col: 'bids.estimator_id', defaultRole: 'estimator' },
+      { key: 'created_by', label: 'Creator',   col: 'bids.created_by',   defaultRole: 'admin' },
+    ],
   },
 
   invoices: {
@@ -214,6 +226,9 @@ const SOURCES = {
     projectIdColumn: 'invoices.project_id',
     dateColumn: 'invoices.invoice_date',
     defaultSort: 'invoices.invoice_date',
+    userScopeColumns: [
+      { key: 'pm', label: 'PM (via project)', col: 'project.pm_id', defaultRole: 'project_manager' },
+    ],
   },
 
   purchase_orders: {
@@ -239,6 +254,9 @@ const SOURCES = {
     projectIdColumn: 'purchase_orders.project_id',
     dateColumn: 'purchase_orders.order_date',
     defaultSort: 'purchase_orders.order_date',
+    userScopeColumns: [
+      { key: 'pm', label: 'PM (via project)', col: 'project.pm_id', defaultRole: 'project_manager' },
+    ],
   },
 
   timesheets: {
@@ -276,6 +294,10 @@ const SOURCES = {
     projectIdColumn: 'timesheets.project_id',
     dateColumn: 'timesheets.work_date',
     defaultSort: 'timesheets.work_date',
+    userScopeColumns: [
+      { key: 'pm',          label: 'PM (via project)', col: 'project.pm_id',        defaultRole: 'project_manager' },
+      { key: 'approved_by', label: 'Approver',         col: 'timesheets.approved_by', defaultRole: 'admin' },
+    ],
   },
 
   equipment: {
@@ -477,6 +499,17 @@ function getSource(srcKey) {
   return SOURCES[srcKey] || null;
 }
 
+/** Array of declared user-scope column defs for this source (or []). */
+function getUserScopeColumns(srcKey) {
+  const src = SOURCES[srcKey];
+  return (src && Array.isArray(src.userScopeColumns)) ? src.userScopeColumns : [];
+}
+
+/** Look up one user-scope column def by its SQL ref (`col`). */
+function findUserScopeColumn(srcKey, col) {
+  return getUserScopeColumns(srcKey).find(c => c.col === col) || null;
+}
+
 module.exports = {
   SOURCES,
   JOINABLE,
@@ -486,5 +519,7 @@ module.exports = {
   allowedColumnKeys,
   headerForColumn,
   getSource,
+  getUserScopeColumns,
+  findUserScopeColumn,
   aliasLabel,
 };

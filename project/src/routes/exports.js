@@ -89,6 +89,23 @@ router.get('/builder/sources', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /api/exports/builder/fanout-config?source=<key> — userScopeColumns + roles
+// PR #20: feeds the fan-out config dropdowns on the schedule modal.
+router.get('/builder/fanout-config', async (req, res, next) => {
+  try {
+    const M = require('../services/exportMetadata');
+    const db = require('../config/database');
+    const source = req.query.source;
+    const userScopeColumns = source ? M.getUserScopeColumns(source) : [];
+    // Roles in use today — distinct values from the users table (active
+    // only). Returning live distinct beats a hardcoded list so newly-
+    // added roles surface automatically.
+    const roleRows = await db('users').where('active', true).distinct('role').orderBy('role');
+    const roles = roleRows.map(r => r.role).filter(Boolean);
+    res.json({ userScopeColumns, roles });
+  } catch (err) { next(err); }
+});
+
 // POST /api/exports/builder/preview — preview first 20 rows
 router.post('/builder/preview', async (req, res, next) => {
   try {
