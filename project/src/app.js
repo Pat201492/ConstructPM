@@ -24,6 +24,7 @@ const inventoryRoutes = require('./routes/inventory');
 const exportRoutes = require('./routes/exports');
 const savedExportRoutes = require('./routes/savedExports');
 const emailTemplateRoutes = require('./routes/emailTemplates');
+const emailTemplateUserRoutes = require('./routes/emailTemplatesUser');
 const emailComposeRoutes = require('./routes/emailCompose');
 const adminRoutes = require('./routes/admin');
 const inboxRoutes = require('./routes/inbox');
@@ -104,6 +105,10 @@ app.use('/api/exports', exportRoutes);
 // Email templates mount FIRST for the same prefix-ordering reason.
 app.use('/api/admin/email-templates', emailTemplateRoutes);
 app.use('/api/admin', adminRoutes);
+
+// User-scoped email template overrides — each caller manages only their
+// own override row; no admin gate.
+app.use('/api/email-templates', emailTemplateUserRoutes);
 
 // Email compose — variable catalog + preview for the compose modal that
 // sits in front of email-day and saved-export-trigger.

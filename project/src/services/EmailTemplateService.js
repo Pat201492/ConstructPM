@@ -81,18 +81,40 @@ const EmailTemplateService = {
    * Throws if the template doesn't exist (callers shouldn't render against
    * a missing template — that's a bug, not a recoverable state).
    *
+   * When `userId` is supplied, an entry in `email_template_user_overrides`
+   * (user_id, key) is consulted first; non-null fields on the override row
+   * supersede the admin row's subject/body_html/body_text. Null fields
+   * inherit from the admin row, so a user can override just the subject
+   * and keep the admin body (or vice versa).
+   *
    * `subject` is rendered WITHOUT HTML-escape — it lands in the Subject:
    * header, not the body, and HTML entities are literal there ("Acme & Co"
    * must come through as "Acme & Co", not "Acme &amp; Co"). `body_html`
    * and `body_text` are rendered with the default escape behaviour.
    */
-  async render(key, vars = {}) {
+  async render(key, vars = {}, userId = null) {
     const tpl = await this.get(key);
     if (!tpl) throw new Error(`Email template not found: ${key}`);
+
+    let subjectSrc = tpl.subject || '';
+    let htmlSrc = tpl.body_html || '';
+    let textSrc = tpl.body_text || null;
+
+    if (userId) {
+      const override = await db('email_template_user_overrides')
+        .where({ user_id: userId, key })
+        .first();
+      if (override) {
+        if (override.subject != null) subjectSrc = override.subject;
+        if (override.body_html != null) htmlSrc = override.body_html;
+        if (override.body_text != null) textSrc = override.body_text;
+      }
+    }
+
     const unresolved = new Set();
-    const subject = renderString(tpl.subject || '', vars, unresolved, { escape: false });
-    const html = renderString(tpl.body_html || '', vars, unresolved);
-    const text = tpl.body_text ? renderString(tpl.body_text, vars, unresolved, { escape: false }) : null;
+    const subject = renderString(subjectSrc, vars, unresolved, { escape: false });
+    const html = renderString(htmlSrc, vars, unresolved);
+    const text = textSrc ? renderString(textSrc, vars, unresolved, { escape: false }) : null;
     return { subject, html, text, unresolved: [...unresolved] };
   },
 
@@ -110,6 +132,102 @@ const EmailTemplateService = {
     }
     const merged = { ...sampleVars, ...overrides };
     return this.render(key, merged);
+  },
+
+  /**
+   * Fetch a user's override row for a template, or null if none. Caller
+   * is expected to be the user themselves (route gate, not service-level).
+   */
+  async getUserOverride(userId, key) {
+    if (!userId || !key) return null;
+    const row = await db('email_template_user_overrides')
+      .where({ user_id: userId, key })
+      .first();
+    return row || null;
+  },
+
+  /**
+   * Upsert a user's override. `patch` may contain any of subject /
+   * body_html / body_text — null clears that field back to inherit. Other
+   * fields not present in `patch` are left untouched on an existing row.
+   * Throws if `key` does not exist in email_templates.
+   */
+  async setUserOverride(userId, key, patch) {
+    if (!userId) throw new Error('userId required');
+    const tpl = await this.get(key);
+    if (!tpl) throw new Error(`Email template not found: ${key}`);
+
+    const allowed = ['subject', 'body_html', 'body_text'];
+    const update = {};
+    for (const k of allowed) {
+      if (Object.prototype.hasOwnProperty.call(patch || {}, k)) update[k] = patch[k];
+    }
+
+    const existing = await db('email_template_user_overrides')
+      .where({ user_id: userId, key })
+      .first();
+
+    if (existing) {
+      if (Object.keys(update).length === 0) return existing;
+      update.updated_at = db.fn.now();
+      const [row] = await db('email_template_user_overrides')
+        .where({ user_id: userId, key })
+        .update(update)
+        .returning('*');
+      return row;
+    }
+
+    const [row] = await db('email_template_user_overrides')
+      .insert({ user_id: userId, key, ...update })
+      .returning('*');
+    return row;
+  },
+
+  /**
+   * Drop a user's override row entirely (back to admin default).
+   */
+  async clearUserOverride(userId, key) {
+    if (!userId || !key) return 0;
+    return db('email_template_user_overrides')
+      .where({ user_id: userId, key })
+      .del();
+  },
+
+  /**
+   * Preview a user-scoped render against the template's declared samples.
+   * `overrides` is an unsaved patch the UI sends so the user can see what
+   * their in-flight edit will look like without persisting it.
+   */
+  async previewWithOverride(key, userId, overrides = {}) {
+    const tpl = await this.get(key);
+    if (!tpl) throw new Error(`Email template not found: ${key}`);
+    const sampleVars = {};
+    for (const v of tpl.variables || []) {
+      if (v && typeof v.key === 'string') sampleVars[v.key] = v.sample == null ? '' : v.sample;
+    }
+
+    let subjectSrc = tpl.subject || '';
+    let htmlSrc = tpl.body_html || '';
+    let textSrc = tpl.body_text || null;
+
+    const persisted = userId ? await this.getUserOverride(userId, key) : null;
+    if (persisted) {
+      if (persisted.subject != null) subjectSrc = persisted.subject;
+      if (persisted.body_html != null) htmlSrc = persisted.body_html;
+      if (persisted.body_text != null) textSrc = persisted.body_text;
+    }
+
+    if (overrides && typeof overrides === 'object') {
+      if (overrides.subject != null) subjectSrc = overrides.subject;
+      if (overrides.body_html != null) htmlSrc = overrides.body_html;
+      if (overrides.body_text != null) textSrc = overrides.body_text;
+    }
+
+    const unresolved = new Set();
+    const subject = renderString(subjectSrc, sampleVars, unresolved, { escape: false });
+    const html = renderString(htmlSrc, sampleVars, unresolved);
+    const text = textSrc ? renderString(textSrc, sampleVars, unresolved, { escape: false }) : null;
+    return { subject, html, text, unresolved: [...unresolved] };
   },
 };
 

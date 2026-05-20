@@ -1,11 +1,13 @@
 /**
  * Email Templates — admin editor surface.
  *
- *   GET    /api/admin/email-templates              List all templates
- *   GET    /api/admin/email-templates/:key         Get one
- *   PATCH  /api/admin/email-templates/:key         Update editable fields
- *   POST   /api/admin/email-templates/:key/preview Render with sample vars
- *                                                  (optional `vars` override)
+ *   GET    /api/admin/email-templates                       List all templates
+ *   GET    /api/admin/email-templates/:key                  Get one
+ *   PATCH  /api/admin/email-templates/:key                  Update editable fields
+ *   POST   /api/admin/email-templates/:key/preview          Render with sample vars
+ *                                                           (optional `vars` override)
+ *   GET    /api/admin/email-templates/:key/recipients       Static recipient list
+ *   PATCH  /api/admin/email-templates/:key/recipients       Update static recipient list
  *
  * All routes require admin. Templates affect every outbound email
  * surface that uses them, so this stays behind a tight gate even though
@@ -17,6 +19,7 @@ const express = require('express');
 const authenticate = require('../middleware/authenticate');
 const { requireRole } = require('../middleware/authorize');
 const EmailTemplateService = require('../services/EmailTemplateService');
+const EmailTriggerRecipientsService = require('../services/EmailTriggerRecipientsService');
 
 const router = express.Router();
 
@@ -56,6 +59,26 @@ router.post('/:key/preview', async (req, res, next) => {
     res.json(rendered);
   } catch (err) {
     if (/not found/i.test(err.message)) return res.status(404).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.get('/:key/recipients', async (req, res, next) => {
+  try {
+    const tpl = await EmailTemplateService.get(req.params.key);
+    if (!tpl) return res.status(404).json({ error: `No template with key "${req.params.key}"` });
+    const recipients = await EmailTriggerRecipientsService.get(req.params.key);
+    res.json({ recipients });
+  } catch (err) { next(err); }
+});
+
+router.patch('/:key/recipients', async (req, res, next) => {
+  try {
+    const updated = await EmailTriggerRecipientsService.set(req.params.key, req.body || {}, req.user.id);
+    res.json({ recipients: updated });
+  } catch (err) {
+    if (/not found/i.test(err.message)) return res.status(404).json({ error: err.message });
+    if (/must be|required/i.test(err.message)) return res.status(400).json({ error: err.message });
     next(err);
   }
 });

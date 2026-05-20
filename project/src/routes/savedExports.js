@@ -113,6 +113,15 @@ function validatePayload(req, { partial = false } = {}) {
     else out.enabled = b.enabled;
   }
 
+  // Per-export email config (PR #18). Each field is optional and null-able:
+  // null clears the value back to inherit (PR #19 falls back to the
+  // legacy `saved_export_email` template when any of these is null).
+  for (const k of ['email_subject', 'email_body_html', 'email_body_text']) {
+    if (b[k] === undefined) continue;
+    if (b[k] === null || typeof b[k] === 'string') out[k] = b[k];
+    else errs.push(`${k} must be a string or null`);
+  }
+
   return { out, errs };
 }
 
