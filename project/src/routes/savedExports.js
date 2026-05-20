@@ -179,7 +179,11 @@ function validatePayload(req, { partial = false } = {}) {
       else out.export_formats = JSON.stringify([...new Set(b.export_formats)]);
     }
   }
-  if (!partial && out.fanout_mode === 'per_user_role') {
+  // Cross-field: when fanout_mode is being set to per_user_role in this
+  // request, require role + filter_column in the same payload. PATCH
+  // callers must bundle the three together so the row never lands in an
+  // invalid state mid-update.
+  if (b.fanout_mode === 'per_user_role') {
     if (!out.fanout_role) errs.push('fanout_role is required when fanout_mode = per_user_role');
     if (!out.fanout_filter_column) errs.push('fanout_filter_column is required when fanout_mode = per_user_role');
   }

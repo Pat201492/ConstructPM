@@ -108,22 +108,23 @@ const ExportFileGenerator = {
       let page = doc.addPage([PAGE_W, PAGE_H]);
       let y = PAGE_H - MARGIN;
 
-      // Section heading
-      if (sections.length > 1 || opts.alwaysShowSectionHeading) {
-        page.drawText(section.name || `Section ${s + 1}`, {
+      // Resolved section heading used by both the first page and every
+      // pagination continuation. If consolidation is on we show the
+      // section's own name (`Sarah Chen`); otherwise the document title.
+      const headingText = (sections.length > 1 || opts.alwaysShowSectionHeading)
+        ? (section.name || `Section ${s + 1}`)
+        : title;
+
+      const drawSectionHeading = (suffix = '') => {
+        page.drawText(headingText + suffix, {
           x: MARGIN, y: y - HEADER_SIZE,
           size: HEADER_SIZE, font: fontBold,
           color: rgb(0.12, 0.31, 0.47),
         });
         y -= HEADER_SIZE + 6;
-      } else {
-        page.drawText(title, {
-          x: MARGIN, y: y - HEADER_SIZE,
-          size: HEADER_SIZE, font: fontBold,
-          color: rgb(0.12, 0.31, 0.47),
-        });
-        y -= HEADER_SIZE + 6;
-      }
+      };
+
+      drawSectionHeading();
 
       // Column widths — split remaining width evenly, cap to char count
       const avail = PAGE_W - 2 * MARGIN;
@@ -152,10 +153,15 @@ const ExportFileGenerator = {
 
       drawHeaderRow();
 
+      let pageNumWithinSection = 1;
       for (const row of section.rows) {
         if (y < MARGIN + LINE_H) {
           page = doc.addPage([PAGE_W, PAGE_H]);
           y = PAGE_H - MARGIN;
+          pageNumWithinSection++;
+          // Redraw section heading + column headers so a reader on page
+          // N can tell which PM's section they're inside.
+          drawSectionHeading(` (cont. — page ${pageNumWithinSection})`);
           drawHeaderRow();
         }
         row.forEach((cell, i) => {

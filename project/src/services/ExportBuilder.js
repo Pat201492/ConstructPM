@@ -120,8 +120,14 @@ const ExportBuilder = {
       if (!scopeDef) throw new Error(`Invalid scope column for "${source}": ${filters.scope_column}`);
       const aliasPart = filters.scope_column.includes('.') ? filters.scope_column.split('.')[0] : null;
       if (aliasPart && src.joins?.[aliasPart] && !neededJoins.has(aliasPart)) {
-        addJoin(aliasPart);
+        // The join loop above has already finished, so we can't rely on
+        // it to attach this join — append directly. (No need to update
+        // neededJoins; nothing else reads it past this point.)
         const j = src.joins[aliasPart];
+        if (j.via && !neededJoins.has(j.via)) {
+          const via = src.joins[j.via];
+          query = query.joinRaw(`LEFT JOIN ?? AS ?? ON ${via.on}`, [via.target, j.via]);
+        }
         query = query.joinRaw(`LEFT JOIN ?? AS ?? ON ${j.on}`, [j.target, aliasPart]);
       }
       query = query.where(filters.scope_column, filters.scope_user_id);

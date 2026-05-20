@@ -92,7 +92,11 @@ const SavedExportFanoutRunner = {
 
       // ── Per-user fan-out ────────────────────────────────────────
       for (const user of users) {
-        const sectionName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email;
+        // Prefer "First Last"; fall back to a short user-id suffix so we
+        // don't leak the recipient's email into filenames or admin-side
+        // section headings.
+        const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+        const sectionName = fullName || `User ${String(user.id).slice(0, 8)}`;
         try {
           const result = await ExportBuilder.execute(savedExport.source, columns, {
             ...filters,
@@ -104,7 +108,11 @@ const SavedExportFanoutRunner = {
           rowCount += userRows.length;
 
           if (userRows.length === 0) {
-            // Empty PM — summary email, no attachment.
+            // Empty PM — summary email, no attachment. Counts as a single
+            // "skipped" (no-data) outcome; we do NOT also bump delivered
+            // or failed, otherwise the same recipient would show up in
+            // two counters at once. Caller can still derive "got an email"
+            // from skipped + delivered totals if it cares.
             const subject = await renderSubject(savedExport, {
               name: `${savedExport.name} — ${sectionName}`,
               source: savedExport.source,
@@ -118,8 +126,12 @@ const SavedExportFanoutRunner = {
               whenUtc,
             }, { emptyNote: `No rows in your scope of "${savedExport.name}" this run.` });
             const res = await NotificationService.sendEmail({ to: user.email, subject, html });
-            if (res && res.delivered) delivered++; else { failed++; if (res?.reason) errors.push(`${user.email}: ${res.reason}`); }
-            skipped++; // counted as "skipped" attachment, even though email still went
+            if (!res || !res.delivered) {
+              failed++;
+              if (res?.reason) errors.push(`${sectionName}: ${res.reason}`);
+            } else {
+              skipped++;
+            }
             adminSections.push({ name: sectionName, headers: userHeaders, rows: [] });
             continue;
           }
@@ -145,10 +157,13 @@ const SavedExportFanoutRunner = {
           });
 
           // nodemailer / NotificationService.sendEmailWithAttachment only
-          // takes ONE file. For multi-format we send N emails to the same
-          // recipient — one per format — so each provider stays simple.
-          // Cheaper alternative would be a multi-attachment helper on
-          // NotificationService, but that's a separate refactor.
+          // takes ONE file today. For multi-format we send N emails to the
+          // same recipient — one per format — so each provider stays
+          // simple. TODO(follow-up): add a NotificationService
+          // sendEmailWithAttachments (plural) helper so multi-format runs
+          // can land as a single email with N attachments. Not done here
+          // because it touches all three provider branches (gmail / ses /
+          // sendgrid) and wants its own focused PR.
           let userDelivered = 0, userFailed = 0;
           for (const att of attachments) {
             const res = await NotificationService.sendEmailWithAttachment({
@@ -159,12 +174,12 @@ const SavedExportFanoutRunner = {
               filename: att.filename,
               contentType: att.contentType,
             });
-            if (res && res.delivered) userDelivered++; else { userFailed++; if (res?.reason) errors.push(`${user.email} (${att.format}): ${res.reason}`); }
+            if (res && res.delivered) userDelivered++; else { userFailed++; if (res?.reason) errors.push(`${sectionName} (${att.format}): ${res.reason}`); }
           }
           if (userFailed === 0) delivered++; else failed++;
         } catch (err) {
           failed++;
-          errors.push(`${user.email}: ${err.message}`);
+          errors.push(`${sectionName}: ${err.message}`);
         }
       }
 
@@ -294,9 +309,17 @@ async function buildConsolidatedCSV(sections, filenameBase, tmpPaths) {
   return buildAttachment(sections, 'csv', filenameBase, tmpPaths);
 }
 
+// Per-export email_subject / email_body_html render path. Reuse the
+// shared renderString from EmailTemplateService so token semantics here
+// match what the admin Email Templates editor produces — `{{var}}` is
+// HTML-escaped, `{{{var}}}` is raw. Without this, fan-out bodies would
+// silently render `<` differently than the corresponding admin template.
+const { _renderString } = EmailTemplateService;
+
 async function renderSubject(savedExport, vars) {
   if (savedExport.email_subject) {
-    return substitute(savedExport.email_subject, vars);
+    const unresolved = new Set();
+    return _renderString(savedExport.email_subject, vars, unresolved, { escape: false });
   }
   // Fallback to legacy template path (PR #18 added email_subject column
   // but kept the template as fallback for null rows).
@@ -307,13 +330,14 @@ async function renderSubject(savedExport, vars) {
 async function renderBody(savedExport, vars, opts = {}) {
   let html;
   if (savedExport.email_body_html) {
-    html = substitute(savedExport.email_body_html, vars, { escapeHtml: true });
+    const unresolved = new Set();
+    html = _renderString(savedExport.email_body_html, vars, unresolved);
   } else {
     const r = await EmailTemplateService.render('saved_export_email', vars);
     html = r.html;
   }
   if (opts.emptyNote) {
-    html += `<p style="color:#888;font-style:italic">${escapeHtml(opts.emptyNote)}</p>`;
+    html += `<p style="color:#888;font-style:italic">${escapeHtmlText(opts.emptyNote)}</p>`;
   }
   if (opts.sectionCount != null) {
     html += `<p style="color:#888;font-size:12px">Consolidated across ${opts.sectionCount} recipients.</p>`;
@@ -321,16 +345,7 @@ async function renderBody(savedExport, vars, opts = {}) {
   return html;
 }
 
-function substitute(template, vars, opts = {}) {
-  return String(template).replace(/\{\{\{?\s*([a-zA-Z_][\w]*)\s*\}?\}\}/g, (_m, name) => {
-    const v = vars[name];
-    if (v == null) return '';
-    const s = String(v);
-    return opts.escapeHtml ? escapeHtml(s) : s;
-  });
-}
-
-function escapeHtml(s) {
+function escapeHtmlText(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
