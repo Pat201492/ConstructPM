@@ -116,12 +116,20 @@ function validatePayload(req, { partial = false } = {}) {
   // Per-export email config (PR #18). Each field is optional and null-able:
   // null clears the value back to inherit (PR #19 falls back to the
   // legacy `saved_export_email` template when any of these is null).
+  // Body columns are TEXT (unbounded) but the inline editor is meant for
+  // a delivery email, not a CMS — cap at 64KB so a pathological paste
+  // can't bloat the row or DoS the row UI.
+  const BODY_MAX = 64 * 1024;
   for (const k of ['email_subject', 'email_body_html', 'email_body_text']) {
     if (b[k] === undefined) continue;
     if (b[k] === null) { out[k] = null; continue; }
     if (typeof b[k] !== 'string') { errs.push(`${k} must be a string or null`); continue; }
     if (k === 'email_subject' && b[k].length > 500) {
       errs.push('email_subject must be 500 characters or fewer');
+      continue;
+    }
+    if (k !== 'email_subject' && b[k].length > BODY_MAX) {
+      errs.push(`${k} must be ${BODY_MAX} characters or fewer`);
       continue;
     }
     out[k] = b[k];

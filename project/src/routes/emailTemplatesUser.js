@@ -58,9 +58,9 @@ router.patch('/:key/my-override', async (req, res, next) => {
     for (const k of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body || {}, k)) patch[k] = req.body[k];
     }
-    if (Object.keys(patch).length === 0) {
-      return res.status(400).json({ error: 'No fields to update' });
-    }
+    // Empty patch is a no-op: service returns null when no row exists or
+    // the unchanged row when one does. Either response is the right
+    // round-trip for the UI's "save with all fields blank" case.
     const override = await EmailTemplateService.setUserOverride(req.user.id, req.params.key, patch);
     res.json({ override });
   } catch (err) {

@@ -10338,6 +10338,11 @@ async function renderOverridePanel({ key, label }) {
   bodyTA.value = (override && override.body_html != null) ? override.body_html : '';
   panel.append(bodyTA);
 
+  panel.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-top:6px'},'Body plain text (leave blank to inherit admin default — optional multipart fallback)'));
+  const bodyTextTA = h('textarea',{style:'width:100%;min-height:80px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical'});
+  bodyTextTA.value = (override && override.body_text != null) ? override.body_text : '';
+  panel.append(bodyTextTA);
+
   if (tpl && tpl.variables && tpl.variables.length > 0) {
     const varsPanel = h('div',{style:'margin-top:8px;padding:6px 8px;background:var(--bg3);border-radius:4px;font-size:11px'});
     varsPanel.append(h('div',{style:'font-weight:700;margin-bottom:4px'},'Available variables'));
@@ -10354,9 +10359,11 @@ async function renderOverridePanel({ key, label }) {
   actions.append(h('button',{className:'btn',onclick:async()=>{
     const subj = subjInp.value;
     const body = bodyTA.value;
+    const bodyText = bodyTextTA.value;
     const patch = {
       subject: subj.length > 0 ? subj : null,
       body_html: body.length > 0 ? body : null,
+      body_text: bodyText.length > 0 ? bodyText : null,
     };
     try {
       const r = await api('/email-templates/' + key + '/my-override', { method:'PATCH', body: JSON.stringify(patch) });
@@ -10369,6 +10376,7 @@ async function renderOverridePanel({ key, label }) {
       const preview = await api('/email-templates/' + key + '/preview', { method:'POST', body: JSON.stringify({
         subject: subjInp.value || null,
         body_html: bodyTA.value || null,
+        body_text: bodyTextTA.value || null,
       })});
       showEmailPreviewModal(preview, { name: label, key });
     } catch (e) { status.textContent = 'Preview failed: ' + e.message; }
@@ -10377,7 +10385,7 @@ async function renderOverridePanel({ key, label }) {
     if (!confirm('Clear your override and use the admin default for "' + label + '"?')) return;
     try {
       await api('/email-templates/' + key + '/my-override', { method:'DELETE' });
-      subjInp.value = ''; bodyTA.value = '';
+      subjInp.value = ''; bodyTA.value = ''; bodyTextTA.value = '';
       override = null;
       status.textContent = 'Override cleared.';
     } catch (e) { status.textContent = 'Clear failed: ' + e.message; }
