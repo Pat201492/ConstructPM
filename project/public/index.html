@@ -4002,8 +4002,7 @@ async function showProjectEditModal(projectId, onSaved) {
     try {
       const oldStart = fmtDateInput(p.start_date);
       const newStart = readDateInput($('#pe-start')) || '';
-      const scheduleChanged = newStart && newStart !== oldStart;
-      await api('/projects/'+projectId,{method:'PATCH',body:JSON.stringify({
+      const res = await api('/projects/'+projectId,{method:'PATCH',body:JSON.stringify({
         name:$('#pe-name').value,
         pm_id:$('#pe-pm').value||undefined,
         customer_id:$('#pe-cust').value||null,
@@ -4023,12 +4022,22 @@ async function showProjectEditModal(projectId, onSaved) {
         address:$('#pe-addr').value||null,
         description:$('#pe-desc').value||null,
       })});
+      // Authoritative post-save start_date from server, not the stale `p`
+      // captured at modal-open. Narrows the race where another tab/user
+      // changed the project while this modal sat open.
+      const savedStart = fmtDateInput(res && res.project && res.project.start_date);
+      const scheduleChanged = !!savedStart && savedStart !== oldStart;
       overlay.remove();
       if (scheduleChanged) {
         // Start date set or changed to a non-empty date: auto-open the
         // schedule edit popup so the PM lands on the calendar card
         // without hunting for it. Popup's onSaved owns the refresh.
-        showScheduleEditPopup(projectId, () => { if(onSaved) onSaved(); });
+        try {
+          await showScheduleEditPopup(projectId, () => { if(onSaved) onSaved(); });
+        } catch (err) {
+          alert('Saved, but could not open the schedule popup: ' + err.message);
+          if(onSaved) onSaved();
+        }
       } else {
         if(onSaved) onSaved();
         alert('Project updated');
