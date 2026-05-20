@@ -4024,12 +4024,13 @@ async function showProjectEditModal(projectId, onSaved) {
         description:$('#pe-desc').value||null,
       })});
       overlay.remove();
-      if(onSaved) onSaved();
       if (scheduleChanged) {
-        // Start date set or changed: auto-open the schedule edit popup so
-        // the PM lands on the calendar card without hunting for it.
+        // Start date set or changed to a non-empty date: auto-open the
+        // schedule edit popup so the PM lands on the calendar card
+        // without hunting for it. Popup's onSaved owns the refresh.
         showScheduleEditPopup(projectId, () => { if(onSaved) onSaved(); });
       } else {
+        if(onSaved) onSaved();
         alert('Project updated');
       }
     }catch(e){alert(e.message)}
@@ -4075,10 +4076,7 @@ async function renderNotifications(main) {
       else if(n.reference_type==='extraction') navigate('notifications');
       // project_schedule notifications: history-only. The schedule edit
       // popup auto-opens at save time in showProjectEditModal, so clicking
-      // the notification just marks read and refreshes the list.
-      else if(n.reference_type==='project_schedule') {
-        render();
-      }
+      // a project_schedule notification falls through to mark-read + render.
       else render();
     }});
     // Symbol: ⚡ for actionable, ⚠️ for warning, nothing for plain informational
