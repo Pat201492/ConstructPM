@@ -605,6 +605,7 @@ router.patch('/:id', authorize('projects:update'), [param('id').isUUID()], async
         const wasNull = !existing.start_date;
         await NotificationService.send({
           userId: project.pm_id,
+          type: 'schedule_dates_needed',
           category: 'actionable',
           priority: 'normal',
           title: wasNull
