@@ -592,19 +592,20 @@ router.patch('/:id', authorize('projects:update'), [param('id').isUUID()], async
 
     const project = await Project.update(req.params.id, updates);
 
-    // Notify PM when start_date is newly set or changed. Clicking the
-    // notification opens the schedule-edit pop-up DIRECTLY as a modal
-    // (frontend keys off referenceType === 'project_schedule' and calls
-    // showScheduleEditPopup) — no Scheduler tab navigation. actionUrl is
-    // kept as a sane fallback for any non-JS notification surface.
+    // Notify PM when start_date is newly set or changed to a non-empty
+    // value. The frontend auto-opens the schedule-edit pop-up at save
+    // time (see showProjectEditModal); the notification is bell-history
+    // only, click is mark-read. Clearing start_date is skipped — there's
+    // no actionable popup for that flow.
     const startChanged = updates.start_date !== undefined &&
       String(existing.start_date || '') !== String(updates.start_date || '');
-    if (startChanged && project.pm_id) {
+    if (startChanged && project.pm_id && updates.start_date) {
       try {
         const NotificationService = require('../services/NotificationService');
         const wasNull = !existing.start_date;
         await NotificationService.send({
           userId: project.pm_id,
+          type: 'schedule_dates_needed',
           category: 'actionable',
           priority: 'normal',
           title: wasNull

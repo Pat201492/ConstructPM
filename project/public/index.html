@@ -4000,7 +4000,9 @@ async function showProjectEditModal(projectId, onSaved) {
   const btns=h('div',{style:'display:flex;gap:8px;margin-top:16px'});
   btns.append(h('button',{className:'btn',onclick:async()=>{
     try {
-      await api('/projects/'+projectId,{method:'PATCH',body:JSON.stringify({
+      const oldStart = fmtDateInput(p.start_date);
+      const newStart = readDateInput($('#pe-start')) || '';
+      const res = await api('/projects/'+projectId,{method:'PATCH',body:JSON.stringify({
         name:$('#pe-name').value,
         pm_id:$('#pe-pm').value||undefined,
         customer_id:$('#pe-cust').value||null,
@@ -4015,14 +4017,31 @@ async function showProjectEditModal(projectId, onSaved) {
         manpower: parseInt($('#pe-manpower').value, 10) || null,
         contract_type:$('#pe-ct').value||null,
         status:$('#pe-status').value,
-        start_date:readDateInput($('#pe-start'))||null,
+        start_date:newStart||null,
         end_date:readDateInput($('#pe-end'))||null,
         address:$('#pe-addr').value||null,
         description:$('#pe-desc').value||null,
       })});
-      alert('Project updated');
+      // Authoritative post-save start_date from server, not the stale `p`
+      // captured at modal-open. Narrows the race where another tab/user
+      // changed the project while this modal sat open.
+      const savedStart = fmtDateInput(res && res.project && res.project.start_date);
+      const scheduleChanged = !!savedStart && savedStart !== oldStart;
       overlay.remove();
-      if(onSaved) onSaved();
+      if (scheduleChanged) {
+        // Start date set or changed to a non-empty date: auto-open the
+        // schedule edit popup so the PM lands on the calendar card
+        // without hunting for it. Popup's onSaved owns the refresh.
+        try {
+          await showScheduleEditPopup(projectId, () => { if(onSaved) onSaved(); });
+        } catch (err) {
+          alert('Saved, but could not open the schedule popup: ' + err.message);
+          if(onSaved) onSaved();
+        }
+      } else {
+        if(onSaved) onSaved();
+        alert('Project updated');
+      }
     }catch(e){alert(e.message)}
   }},'Save Changes'));
   btns.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
@@ -4064,18 +4083,9 @@ async function renderNotifications(main) {
       if(n.reference_type==='project') navigate('project-detail',{id:n.reference_id});
       else if(n.reference_type==='bid') navigate('bid-quote',{id:n.reference_id});
       else if(n.reference_type==='extraction') navigate('notifications');
-      // Schedule notifications go to the calendar AND auto-open the
-      // edit pop-up for the project (Pat's design: PMs land on the
-      // calendar with the right pop-up already open so they confirm
-      // working days in one click without hunting for the card).
-      // Schedule notifications open the schedule-edit pop-up DIRECTLY
-      // as a modal — no Scheduler tab navigation. Pat's refinement: the
-      // PM should be able to edit the calendar card's schedule from
-      // wherever they are, in one click, without context-switching to
-      // the Scheduler tab. After save, refresh whatever they're on.
-      else if(n.reference_type==='project_schedule') {
-        showScheduleEditPopup(n.reference_id, () => render());
-      }
+      // project_schedule notifications: history-only. The schedule edit
+      // popup auto-opens at save time in showProjectEditModal, so clicking
+      // a project_schedule notification falls through to mark-read + render.
       else render();
     }});
     // Symbol: ⚡ for actionable, ⚠️ for warning, nothing for plain informational
