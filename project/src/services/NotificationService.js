@@ -9,6 +9,23 @@ function normalizeAddresses(v) {
   return [...new Set(cleaned)];
 }
 
+// Escape HTML-significant chars for safe inclusion in element text or
+// attribute values. Used when wrapping notification fields (title/body/url)
+// into the boilerplate HTML body that all three providers send.
+function escapeHtml(s) {
+  if (s === undefined || s === null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Cached nodemailer Gmail transport. Built once on first send; reused
+// for subsequent sends so we're not re-establishing SMTP auth per call.
+let _gmailTransport = null;
+
 /**
  * Notification Service
  * 
@@ -46,6 +63,26 @@ const NotificationService = {
   async getPmAndDelegate(pmUserId) {
     const delegate = await this.getDelegateId(pmUserId);
     return [...new Set([pmUserId, delegate].filter(Boolean))];
+  },
+
+  // Build the standard notification HTML body shared by all providers.
+  // All interpolated fields are HTML-escaped so titles/bodies containing
+  // `<`, `>`, `"`, or `'` cannot break out of the surrounding markup.
+  _buildNotificationHtml(notification) {
+    const title = escapeHtml(notification.title);
+    const body = escapeHtml(notification.body);
+    const actionLink = notification.action_url
+      ? `<p><a href="${escapeHtml(notification.action_url)}" style="color: #2E75B6;">View Details &rarr;</a></p>`
+      : '';
+    return `
+              <div style="font-family: Arial, sans-serif; max-width: 600px;">
+                <h2 style="color: #1F4E79;">${title}</h2>
+                <p>${body}</p>
+                ${actionLink}
+                <hr style="border: 1px solid #eee;">
+                <p style="color: #999; font-size: 12px;">Construction PM Platform</p>
+              </div>
+            `;
   },
 
   /**
@@ -175,6 +212,8 @@ const NotificationService = {
       await this._sendViaSendGrid(email, notification);
     } else if (provider === 'ses' && process.env.SES_REGION) {
       await this._sendViaSES(email, notification);
+    } else if (provider === 'gmail' && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      await this._sendViaGmail(email, notification);
     } else {
       // Log email that would be sent (dev mode)
       console.log(`[NotificationService] EMAIL (dev): To: ${email} | Subject: ${notification.title} | Body: ${notification.body}`);
@@ -198,15 +237,7 @@ const NotificationService = {
         content: [
           {
             type: 'text/html',
-            value: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px;">
-                <h2 style="color: #1F4E79;">${notification.title}</h2>
-                <p>${notification.body}</p>
-                ${notification.action_url ? `<p><a href="${notification.action_url}" style="color: #2E75B6;">View Details →</a></p>` : ''}
-                <hr style="border: 1px solid #eee;">
-                <p style="color: #999; font-size: 12px;">Construction PM Platform</p>
-              </div>
-            `,
+            value: this._buildNotificationHtml(notification),
           },
         ],
       }),
@@ -230,20 +261,61 @@ const NotificationService = {
       Message: {
         Subject: { Data: notification.title },
         Body: {
-          Html: {
-            Data: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px;">
-                <h2 style="color: #1F4E79;">${notification.title}</h2>
-                <p>${notification.body}</p>
-                ${notification.action_url ? `<p><a href="${notification.action_url}">View Details →</a></p>` : ''}
-              </div>
-            `,
-          },
+          Html: { Data: this._buildNotificationHtml(notification) },
         },
       },
     });
 
     await client.send(command);
+  },
+
+  /**
+   * Build (or reuse) the nodemailer Gmail SMTP transport. Cached at
+   * module scope on first call so we're not establishing fresh SMTP
+   * auth per send. Shared by all three Gmail send paths.
+   */
+  _getGmailTransport() {
+    if (_gmailTransport) return _gmailTransport;
+    const nodemailer = require('nodemailer');
+    _gmailTransport = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD,
+      },
+    });
+    return _gmailTransport;
+  },
+
+  /**
+   * Raw Gmail SMTP sender used by `sendEmail` / `sendEmailWithAttachment`.
+   * Callers supply already-composed subject/html/text and (optionally)
+   * attachments; this helper only handles transport + From: defaulting.
+   */
+  async _sendViaGmailRaw({ to, cc, subject, html, text, attachments }) {
+    const transport = this._getGmailTransport();
+    await transport.sendMail({
+      from: process.env.EMAIL_FROM || process.env.GMAIL_USER,
+      to,
+      cc: cc && cc.length > 0 ? cc : undefined,
+      subject,
+      html: html || undefined,
+      text: text || undefined,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
+    });
+  },
+
+  /**
+   * Send notification email via Gmail SMTP (app password). Used as a
+   * domain-less dev path: the From: header is the GMAIL_USER address,
+   * which is DKIM-signed by Google and aligns with DMARC.
+   */
+  async _sendViaGmail(to, notification) {
+    await this._sendViaGmailRaw({
+      to,
+      subject: notification.title,
+      html: this._buildNotificationHtml(notification),
+    });
   },
 
   /**
@@ -338,6 +410,21 @@ const NotificationService = {
       }
     }
 
+    if (provider === 'gmail' && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      try {
+        await this._sendViaGmailRaw({
+          to: toList.join(', '),
+          cc: ccList.length > 0 ? ccList.join(', ') : null,
+          subject,
+          html,
+          attachments: [{ filename, content: fileBuf, contentType: ct }],
+        });
+        return { delivered: true, provider: 'gmail' };
+      } catch (err) {
+        return { delivered: false, provider: 'gmail', reason: err.message };
+      }
+    }
+
     // No provider configured — log and report back so the API can tell
     // the caller the email step was skipped (vs. silently lost).
     const ccLabel = ccList.length > 0 ? ` | CC: ${ccList.join(', ')}` : '';
@@ -406,6 +493,21 @@ const NotificationService = {
         return { delivered: true, provider: 'ses' };
       } catch (err) {
         return { delivered: false, provider: 'ses', reason: err.message };
+      }
+    }
+
+    if (provider === 'gmail' && process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
+      try {
+        await this._sendViaGmailRaw({
+          to: toList.join(', '),
+          cc: ccList.length > 0 ? ccList.join(', ') : null,
+          subject,
+          html: html || '',
+          text,
+        });
+        return { delivered: true, provider: 'gmail' };
+      } catch (err) {
+        return { delivered: false, provider: 'gmail', reason: err.message };
       }
     }
 
