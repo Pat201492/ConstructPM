@@ -24,6 +24,8 @@ const authenticate = require('../middleware/authenticate');
 const { authorize } = require('../middleware/authorize');
 const db = require('../config/database');
 const NotificationService = require('../services/NotificationService');
+const EmailTemplateService = require('../services/EmailTemplateService');
+const EmailTriggerRecipientsService = require('../services/EmailTriggerRecipientsService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -424,14 +426,14 @@ router.post('/:ticketNumber/ready', authorize('equipment:read'), async (req, res
     // Fire-and-forget notification — never block the status flip on a
     // delivery hiccup. Email channel is the trigger Pat asked for; the
     // body summarises the ticket so the requestor knows what's ready.
-    notifyTicketReady({ project, ticketNumber: tn })
+    notifyTicketReady({ project, ticketNumber: tn, triggerUser: req.user })
       .catch(err => console.error('[ticket ready] Notification failed:', err.message));
 
     res.json({ ok: true, ticket_number: tn, ready_at: readyAt.toISOString() });
   } catch (err) { next(err); }
 });
 
-async function notifyTicketReady({ project, ticketNumber }) {
+async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
   const recipients = new Set();
   if (project.created_by) recipients.add(project.created_by);
   const admins = await db('users').where({ role: 'admin', active: true }).pluck('id');
@@ -447,6 +449,11 @@ async function notifyTicketReady({ project, ticketNumber }) {
     locationLine ? `Location: ${locationLine}.` : null,
   ].filter(Boolean);
 
+  // In-app channel: still one notifications row per recipient + WebSocket
+  // push. Email channel is split out below so the body comes from the
+  // admin-editable `ticket_ready_pickup` template and the recipient list
+  // merges the admin-configured static list (shop manager + extras) with
+  // the modular set derived from this row.
   await NotificationService.send({
     userIds: [...recipients],
     type: 'equipment_ticket_ready',
@@ -460,6 +467,48 @@ async function notifyTicketReady({ project, ticketNumber }) {
     // number is in the title/body so email recipients can still locate it.
     referenceType: 'equipment_ticket',
     referenceId: project.id, // uuid — notifications.reference_id is uuid; ticket # rides in actionUrl
+    channels: ['in_app'],
+  });
+
+  // Email channel: render the editable template, then merge active
+  // recipient emails with the admin static list (resolve()) and send
+  // one bulk email. No userId passed to render() — this is a bulk
+  // send to N recipients (created_by + admins + admin-configured
+  // static list), so no single user's override can govern the body;
+  // we always use the admin template. `triggerUser` is still used to
+  // populate the `{{created_by_name}}` variable so the recipients can
+  // see who flagged the ticket ready.
+  const recipientUsers = await db('users')
+    .whereIn('id', [...recipients])
+    .where('active', true)
+    .pluck('email');
+  const modularEmails = recipientUsers.filter(Boolean);
+
+  const createdByName = triggerUser
+    ? `${triggerUser.first_name || ''} ${triggerUser.last_name || ''}`.trim()
+    : '';
+
+  const rendered = await EmailTemplateService.render(
+    'ticket_ready_pickup',
+    {
+      ticket_number: String(ticketNumber),
+      project_number: project.project_number || '',
+      pickup_person: project.pickup_person || '',
+      location: locationLine,
+      created_by_name: createdByName,
+    },
+    null,
+  );
+
+  const { to, cc } = await EmailTriggerRecipientsService.resolve('ticket_ready_pickup', modularEmails);
+  if (to.length === 0) return;
+
+  await NotificationService.sendEmail({
+    to,
+    cc: cc.length > 0 ? cc : undefined,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text || undefined,
   });
 }
 

@@ -31,6 +31,8 @@ const FileService = require('../services/FileService');
 const db = require('../config/database');
 const BidDocumentService = require('../services/BidDocumentService');
 const NotificationService = require('../services/NotificationService');
+const EmailTemplateService = require('../services/EmailTemplateService');
+const EmailTriggerRecipientsService = require('../services/EmailTriggerRecipientsService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -762,9 +764,13 @@ router.post('/:id/quick-project', authorize('bids:mark_won'), async (req, res, n
     // Quick Project flow always runs /bids/:id/generate before this,
     // so word_doc_path is populated. If for some reason it isn't (API
     // hit directly, template missing, etc.) we surface that as a
-    // non-fatal "skipped" result alongside the project. Email is
-    // intentionally one-shot, no preference plumbing — Quick Project
-    // is a deliberate "spit out the quote" action.
+    // non-fatal "skipped" result alongside the project. Body/subject
+    // come from the `bid_project_quote` email template — admins can
+    // edit it from Email Templates, and the receiving PM can author a
+    // per-user override (render() picks the override row when one
+    // exists for the project's pm_id, otherwise the admin row). The
+    // *trigger* user (whoever clicked Quick Project) is intentionally
+    // NOT used here — the override belongs to the inbox owner.
     let emailResult = { delivered: false, provider: 'none', reason: 'not attempted' };
     try {
       const refreshed = await Bid.findById(bid.id);
@@ -777,17 +783,31 @@ router.post('/:id/quick-project', authorize('bids:mark_won'), async (req, res, n
           .first();
         const projectLabel = primaryRow?.number || result.project.name;
         const filename = `Bid_${refreshed.bid_number}.docx`;
+
+        const totalRaw = refreshed.bid_amount != null ? Number(refreshed.bid_amount) : null;
+        const quoteTotal = Number.isFinite(totalRaw)
+          ? totalRaw.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+          : '';
+
+        const rendered = await EmailTemplateService.render(
+          'bid_project_quote',
+          {
+            pm_first_name: pm.first_name || '',
+            project_name: projectLabel,
+            bid_number: refreshed.bid_number,
+            quote_total: quoteTotal,
+            attachment_filename: filename,
+          },
+          result.project.pm_id || null,
+        );
+
+        const { to, cc } = await EmailTriggerRecipientsService.resolve('bid_project_quote', [pm.email]);
+
         emailResult = await NotificationService.sendEmailWithAttachment({
-          to: pm.email,
-          subject: `Quote for ${projectLabel} — ${refreshed.bid_number}`,
-          html: `
-            <div style="font-family:Arial,sans-serif;max-width:600px">
-              <h2 style="color:#1F4E79;margin-bottom:8px">${projectLabel}</h2>
-              <p>${result.project.name} has been created from bid <strong>${refreshed.bid_number}</strong>.</p>
-              <p>The Word quote is attached. Set the start date and crew size on the scheduler when ready.</p>
-              <hr style="border:1px solid #eee">
-              <p style="color:#999;font-size:12px">Construction PM — Quick Project email</p>
-            </div>`,
+          to,
+          cc: cc.length > 0 ? cc : undefined,
+          subject: rendered.subject,
+          html: rendered.html,
           filePath: refreshed.word_doc_path,
           filename,
         });

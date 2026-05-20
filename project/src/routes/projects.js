@@ -1132,7 +1132,11 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       // "Day notes: " label in the output. Template just renders {{day_notes}}.
       day_notes: dayNote ? `Day notes: ${dayNote.slice(0, 300)}` : '',
     };
-    const rendered = await EmailTemplateService.render('email_day_to_staff', tplVars);
+    // Pass `req.user.id` so a per-user override on the
+    // `email_day_to_staff` template (set via "My Email Preferences") is
+    // honoured for this PM's sends. Falls back to the admin template
+    // when no override row exists.
+    const rendered = await EmailTemplateService.render('email_day_to_staff', tplVars, req.user?.id || null);
 
     // Fan-out to each worker. Two channels handled distinctly:
     //   - in_app: NotificationService.send creates a notifications row +

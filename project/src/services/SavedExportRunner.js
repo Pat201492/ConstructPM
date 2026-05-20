@@ -93,18 +93,25 @@ const SavedExportRunner = {
         // Compose path: resolve user-edited subject/body against live data
         // + send ONE bulk email (To: override_to OR saved recipients;
         // CC: extra_cc). No per-recipient fan-out — the user explicitly
-        // composed a single message for a chosen audience.
+        // composed a single message for a chosen audience. When the
+        // compose modal didn't override subject/body, fall back to the
+        // saved export's own `email_subject` / `email_body_html` (the
+        // admin-edited per-export config) — NOT the global template,
+        // which PR 19 took out of the runner's read path.
         const composeVars = await EmailComposeService.getVars(
           'saved_export_run',
           { saved_export_id: savedExport.id },
           { rowCount, whenUtc },
         );
+        const baseSubject = savedExport.email_subject || `[ConstructPM] {{name}}`;
+        const baseHtml = savedExport.email_body_html
+          || `<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>`;
         const subject = overrides.override_subject
           ? EmailComposeService.resolveWithVars(overrides.override_subject, composeVars, { escape: false })
-          : EmailComposeService.resolveWithVars(`[ConstructPM] {{name}}`, composeVars, { escape: false });
+          : EmailComposeService.resolveWithVars(baseSubject, composeVars, { escape: false });
         const html = overrides.override_body_html
           ? EmailComposeService.resolveWithVars(overrides.override_body_html, composeVars, { escape: true })
-          : (await EmailTemplateService.render('saved_export_email', composeVars)).html;
+          : EmailComposeService.resolveWithVars(baseHtml, composeVars, { escape: true });
 
         // Recipients: explicit override list OR fall back to the saved
         // recipient_ids (resolved to active emails).
@@ -153,15 +160,24 @@ const SavedExportRunner = {
 
         skipped = recipientIds.length - recipients.length;
 
-        // Subject + body come from the admin-editable `saved_export_email`
-        // template (see migration 20260518_011_email_templates). Rendered
-        // once; reused for every recipient.
-        const rendered = await EmailTemplateService.render('saved_export_email', {
-          name: savedExport.name,
-          source: savedExport.source,
-          rowCount,
-          whenUtc,
-        });
+        // Subject + body come from the admin-editable per-export config
+        // (`saved_exports.email_subject` / `email_body_html`). The
+        // legacy `saved_export_email` template is no longer read here —
+        // the 20260520_002 migration adds the columns, the
+        // 20260520_003 backfill migration copies the template content
+        // into any existing rows that hadn't customised them yet.
+        // renderRaw shares the same mustache + escape rules as the
+        // template render() path. Rendered once; reused for every
+        // recipient.
+        const rendered = EmailTemplateService.renderRaw(
+          {
+            subject: savedExport.email_subject || `[ConstructPM] {{name}}`,
+            body_html: savedExport.email_body_html
+              || `<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>`,
+            body_text: savedExport.email_body_text || null,
+          },
+          { name: savedExport.name, source: savedExport.source, rowCount, whenUtc },
+        );
         const subject = rendered.subject;
         const html = rendered.html;
 

@@ -199,6 +199,22 @@ const EmailTemplateService = {
   },
 
   /**
+   * Render a raw set of source strings (subject / body_html / body_text)
+   * against `vars` using the same Mustache + escape rules as `render`.
+   * Used by callers that store template content outside the
+   * `email_templates` table — e.g. per-row config on `saved_exports` —
+   * so the substitution semantics stay identical across surfaces.
+   * Returns the same `{subject, html, text, unresolved[]}` shape.
+   */
+  renderRaw({ subject = '', body_html = '', body_text = null } = {}, vars = {}) {
+    const unresolved = new Set();
+    const subjectOut = renderString(subject || '', vars, unresolved, { escape: false });
+    const html = renderString(body_html || '', vars, unresolved);
+    const text = body_text ? renderString(body_text, vars, unresolved, { escape: false }) : null;
+    return { subject: subjectOut, html, text, unresolved: [...unresolved] };
+  },
+
+  /**
    * Preview a user-scoped render against the template's declared samples.
    * `overrides` is an unsaved patch the UI sends so the user can see what
    * their in-flight edit will look like without persisting it.
