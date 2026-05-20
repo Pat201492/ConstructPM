@@ -11,22 +11,33 @@
  */
 
 exports.up = async function (knex) {
-  const hasSubject = await knex.schema.hasColumn('saved_exports', 'email_subject');
-  if (hasSubject) return;
+  // Check each column independently so a partial prior application
+  // (e.g. subject added but the migration crashed before the body cols)
+  // is recoverable by re-running.
+  const [hasSubject, hasHtml, hasText] = await Promise.all([
+    knex.schema.hasColumn('saved_exports', 'email_subject'),
+    knex.schema.hasColumn('saved_exports', 'email_body_html'),
+    knex.schema.hasColumn('saved_exports', 'email_body_text'),
+  ]);
+  if (hasSubject && hasHtml && hasText) return;
 
   await knex.schema.alterTable('saved_exports', (t) => {
-    t.string('email_subject', 500);
-    t.text('email_body_html');
-    t.text('email_body_text');
+    if (!hasSubject) t.string('email_subject', 500);
+    if (!hasHtml) t.text('email_body_html');
+    if (!hasText) t.text('email_body_text');
   });
 };
 
 exports.down = async function (knex) {
-  const hasSubject = await knex.schema.hasColumn('saved_exports', 'email_subject');
-  if (!hasSubject) return;
+  const [hasSubject, hasHtml, hasText] = await Promise.all([
+    knex.schema.hasColumn('saved_exports', 'email_subject'),
+    knex.schema.hasColumn('saved_exports', 'email_body_html'),
+    knex.schema.hasColumn('saved_exports', 'email_body_text'),
+  ]);
+  if (!hasSubject && !hasHtml && !hasText) return;
   await knex.schema.alterTable('saved_exports', (t) => {
-    t.dropColumn('email_subject');
-    t.dropColumn('email_body_html');
-    t.dropColumn('email_body_text');
+    if (hasSubject) t.dropColumn('email_subject');
+    if (hasHtml) t.dropColumn('email_body_html');
+    if (hasText) t.dropColumn('email_body_text');
   });
 };

@@ -177,6 +177,11 @@ const EmailTemplateService = {
       return row;
     }
 
+    // No existing row + nothing to write would just create an all-null
+    // row that's indistinguishable from "no override". Skip the insert
+    // and report null so the caller knows nothing was persisted.
+    if (Object.keys(update).length === 0) return null;
+
     const [row] = await db('email_template_user_overrides')
       .insert({ user_id: userId, key, ...update })
       .returning('*');
@@ -206,6 +211,11 @@ const EmailTemplateService = {
       if (v && typeof v.key === 'string') sampleVars[v.key] = v.sample == null ? '' : v.sample;
     }
 
+    // Field resolution order: admin default → persisted user override
+    // (null fields inherit) → unsaved preview patch. In the patch we
+    // distinguish ABSENT (key not present → keep prior) from NULL
+    // (explicit clear → snap back to admin default for that field) so
+    // the UI can preview a "reset to default" without persisting it.
     let subjectSrc = tpl.subject || '';
     let htmlSrc = tpl.body_html || '';
     let textSrc = tpl.body_text || null;
@@ -218,9 +228,10 @@ const EmailTemplateService = {
     }
 
     if (overrides && typeof overrides === 'object') {
-      if (overrides.subject != null) subjectSrc = overrides.subject;
-      if (overrides.body_html != null) htmlSrc = overrides.body_html;
-      if (overrides.body_text != null) textSrc = overrides.body_text;
+      const has = (k) => Object.prototype.hasOwnProperty.call(overrides, k);
+      if (has('subject')) subjectSrc = overrides.subject == null ? (tpl.subject || '') : overrides.subject;
+      if (has('body_html')) htmlSrc = overrides.body_html == null ? (tpl.body_html || '') : overrides.body_html;
+      if (has('body_text')) textSrc = overrides.body_text == null ? (tpl.body_text || null) : overrides.body_text;
     }
 
     const unresolved = new Set();

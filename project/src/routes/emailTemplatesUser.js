@@ -22,15 +22,23 @@ const router = express.Router();
 
 router.use(authenticate);
 
-// Read-only template fetch for non-admins. The admin editor lives behind
-// `/api/admin/email-templates/:key` (admin-gated); this mirror lets the
-// "My Email Preferences" UI render the variable list and admin defaults
-// without exposing the edit/update endpoints.
+// Read-only template metadata for non-admins. The admin editor lives
+// behind `/api/admin/email-templates/:key` (admin-gated); this mirror
+// returns only the fields the "My Email Preferences" UI needs to render
+// the variable hints list. `subject` / `body_html` / `body_text` are
+// stripped — non-admin callers see the admin default only through the
+// server-rendered preview endpoint, never as raw editable strings.
 router.get('/:key', async (req, res, next) => {
   try {
     const template = await EmailTemplateService.get(req.params.key);
     if (!template) return res.status(404).json({ error: 'Not found' });
-    res.json({ template });
+    res.json({
+      template: {
+        key: template.key,
+        name: template.name,
+        variables: template.variables || [],
+      },
+    });
   } catch (err) { next(err); }
 });
 

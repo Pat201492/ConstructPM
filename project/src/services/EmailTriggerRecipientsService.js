@@ -49,24 +49,38 @@ const EmailTriggerRecipientsService = {
     const tpl = await db('email_templates').where('key', key).first();
     if (!tpl) throw new Error(`Email template not found: ${key}`);
 
+    // Collect every validation problem across all fields before
+    // throwing so the caller sees the full list, not just the first
+    // offender. The route maps any /must be|required/i message to 400.
     const allowed = ['static_emails', 'static_user_ids', 'cc_emails'];
     const update = {};
+    const errs = [];
     for (const k of allowed) {
       if (!Object.prototype.hasOwnProperty.call(patch || {}, k)) continue;
       const v = patch[k];
-      if (!Array.isArray(v)) throw new Error(`${k} must be an array`);
+      if (!Array.isArray(v)) { errs.push(`${k} must be an array`); continue; }
       const validator = k === 'static_user_ids' ? isUuid : isEmail;
       const label = k === 'static_user_ids' ? 'UUID' : 'email';
       const cleaned = [];
+      let fieldBad = false;
       for (const item of v) {
-        if (typeof item !== 'string') throw new Error(`${k} entries must be strings`);
+        if (typeof item !== 'string') {
+          errs.push(`${k} entries must be strings`);
+          fieldBad = true;
+          continue;
+        }
         const s = item.trim();
         if (!s) continue;
-        if (!validator(s)) throw new Error(`${k} contains invalid ${label}: ${s}`);
+        if (!validator(s)) {
+          errs.push(`${k} contains invalid ${label}: ${s}`);
+          fieldBad = true;
+          continue;
+        }
         cleaned.push(s);
       }
-      update[k] = JSON.stringify(cleaned);
+      if (!fieldBad) update[k] = JSON.stringify(cleaned);
     }
+    if (errs.length > 0) throw new Error(errs.join('; '));
 
     const existing = await db('email_trigger_recipients').where('key', key).first();
 
@@ -103,7 +117,11 @@ const EmailTriggerRecipientsService = {
           .pluck('email')
       : [];
     const to = dedupe([...(modularEmails || []), ...row.static_emails, ...userEmails]);
-    const cc = dedupe(row.cc_emails);
+    // Strip cc entries that already appear in `to` so the same address
+    // isn't both To and Cc on the same message (some clients double-
+    // deliver, and the duplication trips spam heuristics on others).
+    const toLower = new Set(to.map((e) => e.toLowerCase()));
+    const cc = dedupe(row.cc_emails).filter((e) => !toLower.has(e.toLowerCase()));
     return { to, cc };
   },
 };

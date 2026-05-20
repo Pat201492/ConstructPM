@@ -7641,10 +7641,16 @@ async function renderExports(main) {
       style:'width:100%;min-height:120px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
       placeholder:'<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>'});
     emailBody.value = initial.email_body_html || '';
+    const emailBodyText = h('textarea',{
+      style:'width:100%;min-height:80px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
+      placeholder:'Plain-text fallback for clients that don’t render HTML (optional).'});
+    emailBodyText.value = initial.email_body_text || '';
     emailFold.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-bottom:2px'},'Subject'));
     emailFold.append(emailSubj);
     emailFold.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-bottom:2px'},'Body (HTML)'));
     emailFold.append(emailBody);
+    emailFold.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin:6px 0 2px'},'Body (plain text — optional fallback)'));
+    emailFold.append(emailBodyText);
     modal.append(emailFold);
 
     const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end'});
@@ -7664,6 +7670,7 @@ async function renderExports(main) {
         enabled: enabledCb.checked,
         email_subject: emailSubj.value.trim() || null,
         email_body_html: emailBody.value.trim() || null,
+        email_body_text: emailBodyText.value.trim() || null,
       };
       try {
         if (mode === 'edit') {
@@ -9665,7 +9672,7 @@ function renderRecipientsSection(tpl) {
       const payload = {
         static_emails: parseList(emailsInp.value),
         cc_emails: parseList(ccInp.value),
-        static_user_ids: userTA.value.split(/\s+/).map(x=>x.trim()).filter(Boolean),
+        static_user_ids: parseList(userTA.value),
       };
       await api('/admin/email-templates/'+tpl.key+'/recipients',{method:'PATCH',body:JSON.stringify(payload)});
       status.textContent = 'Saved.';
