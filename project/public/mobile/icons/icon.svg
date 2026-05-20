@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1f2937"/>
+  <g fill="#ffffff" font-family="-apple-system, system-ui, sans-serif" font-weight="700" text-anchor="middle">
+    <text x="256" y="290" font-size="200">cPM</text>
+  </g>
+</svg>
