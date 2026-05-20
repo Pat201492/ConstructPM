@@ -109,6 +109,30 @@ const ExportBuilder = {
       query = query.where(`${src.table}.status`, filters.status);
     }
 
+    // User-scope filter (PR #20 fan-out). `scope_column` must be one of
+    // the source's declared userScopeColumns; the runner is responsible
+    // for validating before reaching here. If the scope column is on a
+    // joined table (e.g. `project.pm_id` for the invoices source), the
+    // join must already be in `neededJoins` — append it on demand so
+    // fan-out queries don't depend on which columns the user picked.
+    if (filters.scope_column && filters.scope_user_id) {
+      const scopeDef = M.findUserScopeColumn(source, filters.scope_column);
+      if (!scopeDef) throw new Error(`Invalid scope column for "${source}": ${filters.scope_column}`);
+      const aliasPart = filters.scope_column.includes('.') ? filters.scope_column.split('.')[0] : null;
+      if (aliasPart && src.joins?.[aliasPart] && !neededJoins.has(aliasPart)) {
+        // The join loop above has already finished, so we can't rely on
+        // it to attach this join — append directly. (No need to update
+        // neededJoins; nothing else reads it past this point.)
+        const j = src.joins[aliasPart];
+        if (j.via && !neededJoins.has(j.via)) {
+          const via = src.joins[j.via];
+          query = query.joinRaw(`LEFT JOIN ?? AS ?? ON ${via.on}`, [via.target, j.via]);
+        }
+        query = query.joinRaw(`LEFT JOIN ?? AS ?? ON ${j.on}`, [j.target, aliasPart]);
+      }
+      query = query.where(filters.scope_column, filters.scope_user_id);
+    }
+
     // Sort + limit
     if (src.defaultSort) query = query.orderBy(src.defaultSort, 'desc');
     const limit = Math.min(Math.max(parseInt(filters.limit, 10) || DEFAULT_LIMIT, 1), MAX_ROWS);
