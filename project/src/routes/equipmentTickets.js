@@ -24,6 +24,8 @@ const authenticate = require('../middleware/authenticate');
 const { authorize } = require('../middleware/authorize');
 const db = require('../config/database');
 const NotificationService = require('../services/NotificationService');
+const EmailTemplateService = require('../services/EmailTemplateService');
+const EmailTriggerRecipientsService = require('../services/EmailTriggerRecipientsService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -424,19 +426,24 @@ router.post('/:ticketNumber/ready', authorize('equipment:read'), async (req, res
     // Fire-and-forget notification — never block the status flip on a
     // delivery hiccup. Email channel is the trigger Pat asked for; the
     // body summarises the ticket so the requestor knows what's ready.
-    notifyTicketReady({ project, ticketNumber: tn })
+    notifyTicketReady({ project, ticketNumber: tn, triggerUser: req.user })
       .catch(err => console.error('[ticket ready] Notification failed:', err.message));
 
     res.json({ ok: true, ticket_number: tn, ready_at: readyAt.toISOString() });
   } catch (err) { next(err); }
 });
 
-async function notifyTicketReady({ project, ticketNumber }) {
-  const recipients = new Set();
-  if (project.created_by) recipients.add(project.created_by);
+async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
+  // In-app channel: requestor + active admins. The bell is an audit
+  // trail for the shop side — admins see every staged ticket and the
+  // requestor sees their own. This set is NOT used for email; email's
+  // modular recipient is the PM (see below), and the admin "Recipients"
+  // tab on `ticket_ready_pickup` handles shop-manager / extras via the
+  // static list.
+  const inAppRecipients = new Set();
+  if (project.created_by) inAppRecipients.add(project.created_by);
   const admins = await db('users').where({ role: 'admin', active: true }).pluck('id');
-  admins.forEach(id => recipients.add(id));
-  if (recipients.size === 0) return;
+  admins.forEach(id => inAppRecipients.add(id));
 
   const locationLine = [project.location_name, project.location_address]
     .filter(Boolean).join(' — ');
@@ -447,19 +454,70 @@ async function notifyTicketReady({ project, ticketNumber }) {
     locationLine ? `Location: ${locationLine}.` : null,
   ].filter(Boolean);
 
-  await NotificationService.send({
-    userIds: [...recipients],
-    type: 'equipment_ticket_ready',
-    title,
-    body: bodyParts.join(' '),
-    category: 'actionable',
-    priority: 'high',
-    // actionUrl intentionally omitted — SPA doesn't have a deep-link
-    // route to a specific ticket modal yet; in-app users will see the
-    // notification and click into the Active Tickets board. The ticket
-    // number is in the title/body so email recipients can still locate it.
-    referenceType: 'equipment_ticket',
-    referenceId: project.id, // uuid — notifications.reference_id is uuid; ticket # rides in actionUrl
+  if (inAppRecipients.size > 0) {
+    await NotificationService.send({
+      userIds: [...inAppRecipients],
+      type: 'equipment_ticket_ready',
+      title,
+      body: bodyParts.join(' '),
+      category: 'actionable',
+      priority: 'high',
+      // actionUrl intentionally omitted — SPA doesn't have a deep-link
+      // route to a specific ticket modal yet; in-app users will see the
+      // notification and click into the Active Tickets board. The ticket
+      // number is in the title/body so they can still locate it.
+      referenceType: 'equipment_ticket',
+      referenceId: project.id, // uuid — notifications.reference_id is uuid; ticket # rides in actionUrl
+      channels: ['in_app'],
+    });
+  }
+
+  // Email channel — modular recipient is the PM of the project the
+  // ticket belongs to (resolved via ticket_project.project_id →
+  // projects.pm_id → users.email). The admin static list (shop manager
+  // + any extras configured on `ticket_ready_pickup`) is merged on top
+  // by EmailTriggerRecipientsService.resolve.
+  //
+  // No userId passed to render() — bulk send, no single override
+  // owner. `triggerUser` is still used to populate the
+  // `{{created_by_name}}` template variable so recipients can see who
+  // flagged the ticket ready.
+  let modularEmails = [];
+  if (project.project_id) {
+    const pmRow = await db('projects as p')
+      .leftJoin('users as u', 'u.id', 'p.pm_id')
+      .where('p.id', project.project_id)
+      .andWhere('u.active', true)
+      .select('u.email')
+      .first();
+    if (pmRow?.email) modularEmails = [pmRow.email];
+  }
+
+  const createdByName = triggerUser
+    ? `${triggerUser.first_name || ''} ${triggerUser.last_name || ''}`.trim()
+    : '';
+
+  const rendered = await EmailTemplateService.render(
+    'ticket_ready_pickup',
+    {
+      ticket_number: String(ticketNumber),
+      project_number: project.project_number || '',
+      pickup_person: project.pickup_person || '',
+      location: locationLine,
+      created_by_name: createdByName,
+    },
+    null,
+  );
+
+  const { to, cc } = await EmailTriggerRecipientsService.resolve('ticket_ready_pickup', modularEmails);
+  if (to.length === 0) return;
+
+  await NotificationService.sendEmail({
+    to,
+    cc: cc.length > 0 ? cc : undefined,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text || undefined,
   });
 }
 
