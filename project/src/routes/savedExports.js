@@ -118,8 +118,13 @@ function validatePayload(req, { partial = false } = {}) {
   // legacy `saved_export_email` template when any of these is null).
   for (const k of ['email_subject', 'email_body_html', 'email_body_text']) {
     if (b[k] === undefined) continue;
-    if (b[k] === null || typeof b[k] === 'string') out[k] = b[k];
-    else errs.push(`${k} must be a string or null`);
+    if (b[k] === null) { out[k] = null; continue; }
+    if (typeof b[k] !== 'string') { errs.push(`${k} must be a string or null`); continue; }
+    if (k === 'email_subject' && b[k].length > 500) {
+      errs.push('email_subject must be 500 characters or fewer');
+      continue;
+    }
+    out[k] = b[k];
   }
 
   return { out, errs };

@@ -55,7 +55,17 @@ const EmailTriggerRecipientsService = {
       if (!Object.prototype.hasOwnProperty.call(patch || {}, k)) continue;
       const v = patch[k];
       if (!Array.isArray(v)) throw new Error(`${k} must be an array`);
-      update[k] = JSON.stringify(v);
+      const validator = k === 'static_user_ids' ? isUuid : isEmail;
+      const label = k === 'static_user_ids' ? 'UUID' : 'email';
+      const cleaned = [];
+      for (const item of v) {
+        if (typeof item !== 'string') throw new Error(`${k} entries must be strings`);
+        const s = item.trim();
+        if (!s) continue;
+        if (!validator(s)) throw new Error(`${k} contains invalid ${label}: ${s}`);
+        cleaned.push(s);
+      }
+      update[k] = JSON.stringify(cleaned);
     }
 
     const existing = await db('email_trigger_recipients').where('key', key).first();
@@ -108,6 +118,11 @@ function parseJsonArray(v) {
   }
   return [];
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isUuid(s) { return UUID_RE.test(s); }
+function isEmail(s) { return EMAIL_RE.test(s); }
 
 function dedupe(arr) {
   const seen = new Set();
