@@ -92,8 +92,9 @@ async function render() {
     location.hash = `#${prof}/${list[0].path}`;
     return;
   }
-  // Profile guard: a shop_staff user can't reach #pm/* routes.
-  if (profile() !== prof && !(profile() === 'pm' && prof === 'pm')) {
+  // Profile guard: a shop_staff user can't reach #pm/* routes (and vice
+  // versa). Admins map to 'pm' in profile() so they're allowed on #pm/*.
+  if (profile() !== prof) {
     routeToDefault();
     return;
   }

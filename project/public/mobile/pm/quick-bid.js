@@ -95,23 +95,32 @@ export default {
       const form = wrap.querySelector('form');
 
       form.querySelector('[data-action="save"]').onclick = async () => {
-        if (!collectStep1(form)) return;
+        if (!collectStep1(form, { requireLocation: false })) return;
         await createBid({ thenStep2: false });
       };
       form.onsubmit = async (e) => {
         e.preventDefault();
-        if (!collectStep1(form)) return;
+        // Location drives rate-sheet lookup in /bids/:id/quote. Without it
+        // the server silently uses 0 rates and the bid amount comes out
+        // as 0, which silently breaks Quick Project. Require it on the
+        // Continue path; Save (draft only) stays unconstrained.
+        if (!collectStep1(form, { requireLocation: true })) return;
         await createBid({ thenStep2: true });
       };
     }
 
-    function collectStep1(form) {
+    function collectStep1(form, { requireLocation } = {}) {
       state.form.customer_id = form.customer_id.value || '';
       state.form.location_id = form.location_id.value || '';
       state.form.project_scope = form.project_scope.value.trim();
       state.form.description = form.description.value.trim();
       if (!state.form.project_scope) {
         state.error = 'Project scope is required';
+        render();
+        return false;
+      }
+      if (requireLocation && !state.form.location_id) {
+        state.error = 'Location is required to create a project (it sets the union rates)';
         render();
         return false;
       }
