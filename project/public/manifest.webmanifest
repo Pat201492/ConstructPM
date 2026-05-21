@@ -1,0 +1,16 @@
+{
+  "name": "ConstructPM Mobile",
+  "short_name": "ConstructPM",
+  "start_url": "/mobile/",
+  "scope": "/mobile/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#1f2937",
+  "description": "Field tools for project managers and shop staff",
+  "icons": [
+    { "src": "/mobile/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/mobile/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/mobile/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
