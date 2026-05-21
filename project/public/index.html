@@ -3914,10 +3914,11 @@ async function showProjectEditModal(projectId, onSaved) {
   modal.append(h('h2',{},'Edit Project'));
 
   // Load dropdowns
-  let customers=[],locations=[],pms=[];
+  let customers=[],locations=[],pms=[],contacts=[];
   try{customers=(await api('/customers')).customers||[];}catch{}
   try{locations=(await api('/locations')).locations||[];}catch{}
   try{pms=(await api('/users/pms')).users||[];}catch{}
+  try{contacts=(await api('/contacts')).contacts||[];}catch{}
 
   const form=h('div',{className:'form-grid'});
 
@@ -3942,6 +3943,22 @@ async function showProjectEditModal(projectId, onSaved) {
   const currentLoc = locations.find(l => l.id === p.location_id);
   if (currentLoc) { locDrop.input.value = currentLoc.name; locDrop.hidden.value = currentLoc.id; }
   form.append(locDrop.group);
+
+  // Customer Contact + Site Contact pickers. The project denormalizes
+  // these on creation (createProjectFromBid at src/routes/bids.js:580)
+  // but until now the edit form had no way to change them — PRs went out
+  // with stale contact info even after the customer side changed reps.
+  // PATCH /projects/:id resolves the *_name / *_phone columns server-side.
+  const contactDisplay = c => `${c.name}${c.company ? ' (' + c.company + ')' : ''}`;
+  const custContactDrop = searchDrop('pe-custcontact', 'Customer Contact', contacts, contactDisplay);
+  const currentCustContact = contacts.find(c => c.id === p.customer_contact_id);
+  if (currentCustContact) { custContactDrop.input.value = contactDisplay(currentCustContact); custContactDrop.hidden.value = currentCustContact.id; }
+  form.append(custContactDrop.group);
+
+  const siteContactDrop = searchDrop('pe-sitecontact', 'Site Contact', contacts, contactDisplay);
+  const currentSiteContact = contacts.find(c => c.id === p.site_contact_id);
+  if (currentSiteContact) { siteContactDrop.input.value = contactDisplay(currentSiteContact); siteContactDrop.hidden.value = currentSiteContact.id; }
+  form.append(siteContactDrop.group);
 
   // Other fields
   const fields=[
@@ -4010,6 +4027,8 @@ async function showProjectEditModal(projectId, onSaved) {
         pm_id:$('#pe-pm').value||undefined,
         customer_id:$('#pe-cust').value||null,
         location_id:$('#pe-loc').value||null,
+        customer_contact_id:$('#pe-custcontact').value||null,
+        site_contact_id:$('#pe-sitecontact').value||null,
         year:parseInt($('#pe-year').value)||2026,
         contract_value:parseFloat($('#pe-val').value)||null,
         payment_terms:$('#pe-terms').value||null,

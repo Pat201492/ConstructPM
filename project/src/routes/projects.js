@@ -584,10 +584,38 @@ router.patch('/:id', authorize('projects:update'), [param('id').isUUID()], async
       'contract_man_hours', 'local_union', 'miles_from_hq', 'start_date', 'end_date',
       'description', 'address', 'pm_id', 'customer_id', 'location_id', 'per_diem_rate',
       'project_length_days', 'manpower', 'notes',
+      'customer_contact_id', 'site_contact_id',
     ];
     const updates = {};
     for (const f of allowedFields) {
       if (req.body[f] !== undefined) updates[f] = req.body[f];
+    }
+
+    // Denormalized contact name/phone columns mirror the linked contact
+    // row at write time so the project keeps a historical snapshot even
+    // if the contact is later renamed or deleted (see migration that
+    // added these columns + createProjectFromBid at bids.js:580). Resolve
+    // them server-side whenever the FK changes so the client doesn't
+    // have to pass them.
+    if (updates.customer_contact_id !== undefined &&
+        String(updates.customer_contact_id || '') !== String(existing.customer_contact_id || '')) {
+      if (updates.customer_contact_id) {
+        const c = await db('contacts').where('id', updates.customer_contact_id).first();
+        updates.customer_contact_name = c ? c.name : null;
+      } else {
+        updates.customer_contact_name = null;
+      }
+    }
+    if (updates.site_contact_id !== undefined &&
+        String(updates.site_contact_id || '') !== String(existing.site_contact_id || '')) {
+      if (updates.site_contact_id) {
+        const c = await db('contacts').where('id', updates.site_contact_id).first();
+        updates.site_contact_name = c ? c.name : null;
+        updates.site_contact_phone = c ? (c.phone || null) : null;
+      } else {
+        updates.site_contact_name = null;
+        updates.site_contact_phone = null;
+      }
     }
 
     const project = await Project.update(req.params.id, updates);
