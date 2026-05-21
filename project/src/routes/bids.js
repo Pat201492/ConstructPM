@@ -859,9 +859,9 @@ router.post('/:id/snooze', authorize('bids:update'), async (req, res, next) => {
 
 router.patch('/:id', authorize('bids:update'), async (req, res, next) => {
   try {
-    const allowed = ['customer_id', 'customer_contact_id', 'location_id', 'project_scope',
-      'description', 'local_union', 'miles_from_hq', 'markup_pct', 'project_length_days',
-      'due_date', 'submit_date', 'status', 'assigned_pm_id'];
+    const allowed = ['customer_id', 'customer_contact_id', 'site_contact_id', 'location_id',
+      'project_scope', 'description', 'local_union', 'miles_from_hq', 'markup_pct',
+      'project_length_days', 'due_date', 'submit_date', 'status', 'assigned_pm_id'];
     const data = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) data[key] = req.body[key];

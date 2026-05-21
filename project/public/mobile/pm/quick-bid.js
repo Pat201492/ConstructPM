@@ -121,7 +121,10 @@ export default {
             state.form.site_contact_id = sel.value;
           }
           if (f === 'site_contact_id') {
-            if (sel.value !== state.form.customer_contact_id) state.siteContactManuallyEdited = true;
+            // Any explicit user pick of site contact stops auto-mirroring,
+            // even when the chosen value happens to match the current
+            // customer contact (intent: "I've decided site is this person").
+            state.siteContactManuallyEdited = true;
           }
           if (f === 'location_id') {
             const loc = state.locations.find(l => l.id === sel.value);
@@ -178,7 +181,16 @@ export default {
           project_scope: state.form.project_scope,
           description: state.form.description || null,
         };
-        const bid = await api('/bids', { method: 'POST', body: JSON.stringify(payload) });
+        // If a draft was already created earlier in this session (user
+        // clicked Continue, hit Back, edited fields, clicked Continue
+        // again), PATCH the existing bid rather than POST a new one —
+        // otherwise every round trip leaves a stray draft behind.
+        let bid;
+        if (state.bidId) {
+          bid = await api('/bids/' + state.bidId, { method: 'PATCH', body: JSON.stringify(payload) });
+        } else {
+          bid = await api('/bids', { method: 'POST', body: JSON.stringify(payload) });
+        }
         state.bidId = bid.id;
         state.bidNumber = bid.bid_number;
         if (thenStep2) {
@@ -429,7 +441,13 @@ export default {
     function renderModal() {
       const m = state.modal;
       const title = { customer: 'New customer', contact: 'New contact', location: 'New location' }[m.type] || 'New';
+      // Tear down any previous overlay before appending a new one. render()
+      // can fire mid-submit (busy state), so without this we'd stack
+      // multiple position:fixed overlays in the DOM and the user couldn't
+      // interact with the page after dismiss.
+      document.querySelectorAll('[data-quickbid-overlay]').forEach(el => el.remove());
       const overlay = document.createElement('div');
+      overlay.dataset.quickbidOverlay = '1';
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.6);z-index:60;display:flex;align-items:flex-end';
       overlay.innerHTML = `
         <div style="background:var(--surface);width:100%;max-height:90vh;overflow:auto;border-radius:16px 16px 0 0;padding:20px;padding-bottom:calc(20px + var(--safe-bot))">
