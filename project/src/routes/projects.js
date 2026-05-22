@@ -302,6 +302,7 @@ router.get('/scheduled-list', authorize('projects:read'), async (req, res, next)
         'projects.id', 'projects.name', 'projects.start_date',
         'projects.project_length_days', 'projects.manpower',
         'projects.pm_id', 'projects.status',
+        'projects.address',
         'pn.primary_number',
         'customers.name as customer_name',
         'project_schedule_overrides.works_saturday',

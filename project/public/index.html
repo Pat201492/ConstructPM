@@ -5303,7 +5303,7 @@ async function renderSchedule(main) {
 
     projects.filter(p => projectOccupiesDay(p, day)).forEach(p => {
       const card = h('div',{
-        title: `${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}`,
+        title: `${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}` + (p.address ? `\nAddress: ${p.address}` : ''),
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
@@ -5361,8 +5361,14 @@ async function showScheduleEditPopup(projectId, onSaved) {
 
   modal.innerHTML = '';
   modal.append(h('h2',{},'Schedule: ' + (project.name || 'Project')));
-  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:14px'},
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:6px'},
     `Customer: ${project.customer_name || '—'} • PM: ${project.pm_name || '—'}`));
+  if (project.address) {
+    modal.append(h('p',{style:'color:var(--text);font-size:12px;margin-bottom:14px'},[
+      h('strong',{},'Address: '),
+      document.createTextNode(project.address),
+    ]));
+  }
 
   // Two-column form for the four scheduling inputs
   const formGrid = h('div',{className:'form-grid'});
@@ -5710,7 +5716,7 @@ async function renderScheduler(main) {
       const stamp = isFullyStaffedDay ? '✅ ' : '';
       const countLabel = target > 0 ? ` (${assigned}/${target})` : ` (${assigned})`;
       const card = h('div',{
-        title: `${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}\nClick to manage crew for ${dKey}`,
+        title: `${stamp}${p.primary_number || p.name}${countLabel}\n${p.customer_name || ''}` + (p.address ? `\nAddress: ${p.address}` : '') + `\nClick to manage crew for ${dKey}`,
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
@@ -5767,6 +5773,15 @@ async function showSchedulerDayPopup(project, dateKey, onSaved) {
   modal.append(h('h2',{},(dayState.fully_staffed ? '✅ ' : '') + (project.primary_number ? project.primary_number + ' — ' : '') + (project.name || 'Project')));
   modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:6px'},
     `Customer: ${project.customer_name || '—'} • PM: ${project.pm_name || '—'} • Length: ${project.project_length_days || '?'} working days • Manpower target: ${project.manpower || '?'}`));
+  if (project.address) {
+    // Full site address (including zip) — kept on its own line so PMs can
+    // copy it cleanly into Maps / share with the crew. Falls back silently
+    // when a project hasn't been geocoded yet.
+    modal.append(h('p',{style:'color:var(--text);font-size:12px;margin-bottom:6px'},[
+      h('strong',{},'Address: '),
+      document.createTextNode(project.address),
+    ]));
+  }
   modal.append(h('p',{style:'color:var(--text);font-size:13px;font-weight:600;margin-bottom:12px'},
     `Crew for ${dateKey}: ${dayAssignments.length} worker${dayAssignments.length === 1 ? '' : 's'} assigned`));
 
