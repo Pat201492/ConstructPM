@@ -7254,18 +7254,6 @@ async function renderExports(main) {
   let selectedColumns = []; // ordered keys — drag-to-reorder mutates in place
   let columnSearch = '';
 
-  // ── State (scheduler) ────────────────────────────────────
-  // Cached per renderExports() invocation. Users added/deactivated during
-  // the session won't appear/disappear until the Exports tab is re-rendered
-  // (any tab switch). Acceptable: org membership doesn't churn intra-session.
-  let emailPickerUsers = null;
-  async function getEmailPicker() {
-    if (emailPickerUsers !== null) return emailPickerUsers;
-    try { const r = await api('/users/email-picker'); emailPickerUsers = r.users || []; }
-    catch { emailPickerUsers = []; }
-    return emailPickerUsers;
-  }
-
   // ── Scheduled section (top of page) ──────────────────────
   const scheduledContainer = h('div',{id:'exp-scheduled',style:'margin-bottom:24px'});
   main.append(scheduledContainer);
@@ -7698,29 +7686,13 @@ async function renderExports(main) {
       cronInp, chips,
     ]));
 
-    const recipsContainer = h('div',{style:'max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
+    const recipsContainer = h('div',{style:'border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
     modal.append(h('div',{style:'margin-bottom:10px'},[
       h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'},'Recipients'),
       recipsContainer,
     ]));
     const selectedRecipients = new Set(initial.recipients || []);
-    (async () => {
-      const users = await getEmailPicker();
-      recipsContainer.innerHTML = '';
-      if (users.length === 0) {
-        recipsContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
-        return;
-      }
-      users.forEach(u => {
-        const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
-        const cb = h('input',{type:'checkbox',style:'width:auto'});
-        cb.checked = selectedRecipients.has(u.id);
-        cb.onchange = () => { if (cb.checked) selectedRecipients.add(u.id); else selectedRecipients.delete(u.id); };
-        row.append(cb);
-        row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
-        recipsContainer.append(row);
-      });
-    })();
+    mountRecipientPicker(recipsContainer, selectedRecipients, { placeholder: 'Type a name or email…' });
 
     const enabledCb = h('input',{type:'checkbox',style:'width:auto'});
     enabledCb.checked = initial.enabled !== false;
@@ -7802,10 +7774,11 @@ async function renderExports(main) {
       adminCb, document.createTextNode('Also send a consolidated copy (every user\'s section combined) to admin recipients below'),
     ]));
 
-    const adminRecipsContainer = h('div',{style:'max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg);margin-top:4px'});
+    const adminRecipsContainer = h('div',{style:'border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg);margin-top:4px'});
     fanoutBody.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-top:4px'},'Admin consolidated recipients'));
     fanoutBody.append(adminRecipsContainer);
     const selectedAdminRecipients = new Set(initial.admin_recipients || []);
+    mountRecipientPicker(adminRecipsContainer, selectedAdminRecipients, { placeholder: 'Type a name or email…' });
 
     fanoutFold.append(fanoutBody);
     modal.append(fanoutFold);
@@ -7839,21 +7812,6 @@ async function renderExports(main) {
         }
       } catch (e) {
         roleSel.append(h('option',{value:''},'(failed to load roles)'));
-      }
-      const users = await getEmailPicker();
-      adminRecipsContainer.innerHTML = '';
-      if (users.length === 0) {
-        adminRecipsContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
-      } else {
-        users.forEach(u => {
-          const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
-          const cb = h('input',{type:'checkbox',style:'width:auto'});
-          cb.checked = selectedAdminRecipients.has(u.id);
-          cb.onchange = () => { if (cb.checked) selectedAdminRecipients.add(u.id); else selectedAdminRecipients.delete(u.id); };
-          row.append(cb);
-          row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
-          adminRecipsContainer.append(row);
-        });
       }
     })();
 
@@ -8147,30 +8105,11 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
   const emailWrap = h('div',{style:'background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:14px'});
 
   emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'},
-    'Recipients (static — pick from active users with email)'));
-  const recipsContainer = h('div',{style:'max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
+    'Recipients (start typing to find an active user, click to lock in)'));
+  const recipsContainer = h('div',{style:'border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
   emailWrap.append(recipsContainer);
   const selectedRecipients = new Set(initial.recipients || []);
-  (async () => {
-    try {
-      const r = await api('/users/email-picker');
-      const users = r.users || [];
-      recipsContainer.innerHTML = '';
-      if (users.length === 0) {
-        recipsContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
-        return;
-      }
-      users.forEach(u => {
-        const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
-        const cb = h('input',{type:'checkbox',style:'width:auto'});
-        cb.checked = selectedRecipients.has(u.id);
-        cb.onchange = () => { if (cb.checked) selectedRecipients.add(u.id); else selectedRecipients.delete(u.id); };
-        row.append(cb);
-        row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
-        recipsContainer.append(row);
-      });
-    } catch {}
-  })();
+  mountRecipientPicker(recipsContainer, selectedRecipients, { placeholder: 'Type a name or email…' });
 
   emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Subject'));
   const subjInp = h('input',{type:'text',value:initial.email_subject||'',
@@ -8256,6 +8195,124 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
       control,
     ]);
   }
+}
+
+// Typeahead recipient picker. Replaces the scroll-list-of-checkboxes
+// pattern with a chip stack + search input. Once a user is added, they
+// are dropped from the suggestion pool until their chip is removed.
+//
+// container       — DOM node to mount into; its own outer styles are
+//                   preserved (the helper only owns children).
+// selectedSet     — Set<userId> to read/mutate (caller's reference; the
+//                   final submit reads back from this same Set).
+// opts.placeholder, opts.maxResults — optional cosmetics.
+function mountRecipientPicker(container, selectedSet, opts) {
+  opts = opts || {};
+  const placeholder = opts.placeholder || 'Type a name or email…';
+  const maxResults = opts.maxResults || 8;
+  let allUsers = [];
+
+  container.innerHTML = '';
+  const chipsRow = h('div',{style:'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:22px'});
+  container.append(chipsRow);
+
+  const inputWrap = h('div',{style:'position:relative'});
+  const input = h('input',{type:'text',placeholder:placeholder,
+    style:'width:100%;padding:6px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;font-size:12px;color:var(--text);box-sizing:border-box'});
+  const dropdown = h('div',{style:'position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:4px;margin-top:2px;max-height:220px;overflow-y:auto;display:none;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,0.35)'});
+  inputWrap.append(input); inputWrap.append(dropdown);
+  container.append(inputWrap);
+
+  function userLabel(u) {
+    return ((u.first_name || '') + ' ' + (u.last_name || '')).trim() + ' <' + u.email + '>';
+  }
+
+  function renderChips() {
+    chipsRow.innerHTML = '';
+    if (selectedSet.size === 0) {
+      chipsRow.append(h('span',{style:'color:var(--text3);font-size:11px;font-style:italic;padding:2px 0'},
+        'No recipients yet — type below to add.'));
+      return;
+    }
+    [...selectedSet].forEach(id => {
+      const u = allUsers.find(x => x.id === id);
+      const label = u ? userLabel(u) : id;
+      const chip = h('span',{style:'display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;font-size:11px;line-height:1.4'});
+      chip.append(document.createTextNode(label));
+      chip.append(h('button',{type:'button',
+        style:'background:none;border:none;color:var(--text2);cursor:pointer;padding:0 4px;font-size:13px;line-height:1',
+        title:'Remove',
+        onclick:()=>{ selectedSet.delete(id); renderChips(); renderDropdown(); }
+      },'×'));
+      chipsRow.append(chip);
+    });
+  }
+
+  function renderDropdown() {
+    const q = input.value.trim().toLowerCase();
+    const matches = allUsers
+      .filter(u => !selectedSet.has(u.id))
+      .filter(u => {
+        if (!q) return true;
+        const hay = ((u.first_name || '') + ' ' + (u.last_name || '') + ' ' + (u.email || '')).toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, maxResults);
+    dropdown.innerHTML = '';
+    if (matches.length === 0) {
+      const remaining = allUsers.length - selectedSet.size;
+      const msg = remaining <= 0 ? 'All active users added.' : 'No match.';
+      dropdown.append(h('div',{style:'padding:6px 10px;font-size:11px;color:var(--text3)'}, msg));
+    } else {
+      matches.forEach(u => {
+        const row = h('div',{
+          style:'padding:6px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)',
+          onmouseenter:(e)=>{e.currentTarget.style.background='var(--bg3)';},
+          onmouseleave:(e)=>{e.currentTarget.style.background='';},
+          // Use mousedown — input's blur fires before click would, hiding
+          // the dropdown before the click handler runs. mousedown beats blur.
+          onmousedown:(e)=>{
+            e.preventDefault();
+            selectedSet.add(u.id);
+            input.value = '';
+            renderChips();
+            renderDropdown();
+            input.focus();
+          },
+        });
+        row.append(document.createTextNode(userLabel(u)));
+        dropdown.append(row);
+      });
+    }
+    dropdown.style.display = 'block';
+  }
+
+  input.oninput = renderDropdown;
+  input.onfocus = renderDropdown;
+  input.onblur  = () => { setTimeout(()=>{ dropdown.style.display = 'none'; }, 120); };
+
+  renderChips();
+
+  (async () => {
+    try { const r = await api('/users/email-picker'); allUsers = r.users || []; }
+    catch { allUsers = []; }
+    if (allUsers.length === 0) {
+      // Don't blow away the input + chips if the user list fetch failed
+      // mid-edit — their already-locked-in recipients (rendered with UUID
+      // labels) would otherwise vanish without warning. Replace the
+      // suggestion input with a static notice but keep the chip row so
+      // the user can still see / remove their existing picks.
+      input.placeholder = 'No active users to search';
+      input.disabled = true;
+      const warn = h('p',{style:'color:var(--text3);font-size:11px;margin:6px 0 0'},
+        selectedSet.size > 0
+          ? 'User directory could not be loaded — locked-in recipients shown above will still be saved.'
+          : 'No active users with email on file.');
+      container.append(warn);
+      return;
+    }
+    renderChips();
+  })();
 }
 
 // Cron → frequency UI fields. Returns one of:
