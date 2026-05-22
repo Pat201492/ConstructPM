@@ -533,26 +533,57 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
   // Loop the pickup person in by user FK (pickup_person_id) — the
   // whole point of the request form's pickup-person picker is so the
   // person physically grabbing the gear gets pinged when it's staged.
-  // De-dup against the PM email in case they're the same human.
+  // De-dup against the PM email in case they're the same human. Also
+  // grab their live first+last name so the email template renders the
+  // authoritative current value, not the denormalised text snapshot
+  // (which goes stale if the user is renamed in profile after the
+  // ticket was created).
+  let pickupDisplayName = project.pickup_person || '';
   if (project.pickup_person_id) {
     const pu = await db('users')
       .where({ id: project.pickup_person_id, active: true })
-      .first('email');
+      .first('email', 'first_name', 'last_name');
     if (pu?.email && !modularEmails.includes(pu.email)) modularEmails.push(pu.email);
+    if (pu) {
+      const liveName = `${pu.first_name || ''} ${pu.last_name || ''}`.trim();
+      if (liveName) pickupDisplayName = liveName;
+    }
   }
 
+  // req.user comes from authenticate middleware which decodes JWT into
+  // camelCase fields (firstName/lastName). DB rows use snake_case. Read
+  // both so this works whether the caller passes a JWT-decoded user
+  // (HTTP path) or a DB row (future deferred-worker path).
   const createdByName = triggerUser
-    ? `${triggerUser.first_name || ''} ${triggerUser.last_name || ''}`.trim()
+    ? `${triggerUser.first_name || triggerUser.firstName || ''} ${triggerUser.last_name || triggerUser.lastName || ''}`.trim()
     : '';
+
+  // Build the equipment-list HTML table from the requested lines (qty +
+  // name only — Pat: "no equipment numbers just names and qtys"). esc()
+  // every cell so a malicious-or-typo'd name can't inject markup; the
+  // template uses {{{equipment_table_html}}} (raw) to drop this in.
+  const lineRows = await db('ticket_equipment').where('ticket_number', ticketNumber);
+  const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const tdStyle = 'padding:6px 12px;border:1px solid #e2e8f0;font-size:13px';
+  const thStyle = tdStyle + ';background:#f1f5f9;text-align:left;font-weight:600';
+  const bodyRows = (lineRows && lineRows.length > 0)
+    ? lineRows.map(l => `<tr><td style="${tdStyle};text-align:center;width:60px">${escHtml(l.quantity || 1)}</td><td style="${tdStyle}">${escHtml(l.equipment_name || '—')}</td></tr>`).join('')
+    : `<tr><td colspan="2" style="${tdStyle};color:#888;font-style:italic">(no line items)</td></tr>`;
+  const equipmentTableHtml =
+    `<table style="border-collapse:collapse;margin-top:6px">` +
+      `<thead><tr><th style="${thStyle};text-align:center;width:60px">Qty</th><th style="${thStyle}">Equipment</th></tr></thead>` +
+      `<tbody>${bodyRows}</tbody>` +
+    `</table>`;
 
   const rendered = await EmailTemplateService.render(
     'ticket_ready_pickup',
     {
       ticket_number: String(ticketNumber),
       project_number: project.project_number || '',
-      pickup_person: project.pickup_person || '',
+      pickup_person: pickupDisplayName,
       location: locationLine,
       created_by_name: createdByName,
+      equipment_table_html: equipmentTableHtml,
     },
     null,
   );
