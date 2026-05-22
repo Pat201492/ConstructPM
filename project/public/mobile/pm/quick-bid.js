@@ -24,6 +24,7 @@
 //     + schedule_dates_needed notifications, creates project + folder).
 
 import { api } from '../lib/api.js';
+import { pickerHtml, bindPicker } from '../lib/pickers.js';
 
 const ESC_HTML = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ESC_HTML[c]);
@@ -48,6 +49,7 @@ export default {
         description: '',
         assigned_pm_id: '',
         local_union: '',
+        miles_from_hq: '',
       },
       siteContactManuallyEdited: false,
       quote: {
@@ -83,15 +85,29 @@ export default {
     }
 
     function renderStep1() {
+      const pickerConfigs = [
+        { label: 'Customer',         id: 'customer_id',         items: state.customers, labelFn: c => c.name, modalType: 'customer' },
+        { label: 'Customer contact', id: 'customer_contact_id', items: state.contacts,  labelFn: c => `${c.name}${c.company ? ' (' + c.company + ')' : ''}`, modalType: 'contact' },
+        { label: 'Site contact',     id: 'site_contact_id',     items: state.contacts,  labelFn: c => `${c.name}${c.company ? ' (' + c.company + ')' : ''}`, modalType: 'contact' },
+        { label: 'Location',         id: 'location_id',         items: state.locations, labelFn: l => `${l.name || l.town || '(unnamed)'}${l.local_union ? ' — ' + l.local_union : ''}`, modalType: 'location' },
+      ];
       const wrap = document.createElement('div');
       wrap.innerHTML = `
         <div class="section-title">Bid info</div>
         <div class="card">
-          ${pickerRow({ label: 'Customer', id: 'customer_id', items: state.customers, labelFn: c => c.name, modalType: 'customer' })}
-          ${pickerRow({ label: 'Customer contact', id: 'customer_contact_id', items: state.contacts, labelFn: c => `${c.name}${c.company ? ' (' + c.company + ')' : ''}`, modalType: 'contact' })}
-          ${pickerRow({ label: 'Site contact', id: 'site_contact_id', items: state.contacts, labelFn: c => `${c.name}${c.company ? ' (' + c.company + ')' : ''}`, modalType: 'contact' })}
-          ${pickerRow({ label: 'Location', id: 'location_id', items: state.locations, labelFn: l => `${l.name || l.town || '(unnamed)'}${l.local_union ? ' — ' + l.local_union : ''}`, modalType: 'location' })}
-          <div style="margin-top:8px"><label>Local union</label><input value="${esc(state.form.local_union)}" readonly placeholder="Auto-fills from location" /></div>
+          ${pickerConfigs.map(c => {
+            const sel = state.form[c.id];
+            const selItem = sel ? c.items.find(i => i.id === sel) : null;
+            return pickerHtml({
+              id: c.id, label: c.label,
+              selectedDisplay: selItem ? c.labelFn(selItem) : '',
+              addModalType: c.modalType,
+            });
+          }).join('')}
+          <div class="row" style="gap:6px;margin-top:8px">
+            <div class="grow"><label>Local union</label><input value="${esc(state.form.local_union)}" readonly placeholder="From location" /></div>
+            <div style="width:120px"><label>Miles from HQ</label><input value="${esc(state.form.miles_from_hq)}" readonly placeholder="—" /></div>
+          </div>
           <div style="margin-top:8px">
             <label>Assigned PM</label>
             <select data-field="assigned_pm_id">
@@ -113,23 +129,23 @@ export default {
       `;
       root.appendChild(wrap);
 
+      // Wire each picker: type-to-filter input + click-to-pick dropdown.
+      // Closure over the config keeps items/labelFn accessible without
+      // round-tripping through data-attributes (which can't carry objects).
+      pickerConfigs.forEach(cfg => {
+        bindPicker(wrap, {
+          id: cfg.id, items: cfg.items, labelFn: cfg.labelFn,
+          onPick: (pickedId, item) => {
+            state.form[cfg.id] = pickedId;
+            applyPickSideEffects(cfg.id, pickedId, item);
+            render();
+          },
+        });
+      });
+
       wrap.querySelectorAll('select[data-field]').forEach(sel => {
         sel.onchange = () => {
-          const f = sel.dataset.field;
-          state.form[f] = sel.value;
-          if (f === 'customer_contact_id' && !state.siteContactManuallyEdited) {
-            state.form.site_contact_id = sel.value;
-          }
-          if (f === 'site_contact_id') {
-            // Any explicit user pick of site contact stops auto-mirroring,
-            // even when the chosen value happens to match the current
-            // customer contact (intent: "I've decided site is this person").
-            state.siteContactManuallyEdited = true;
-          }
-          if (f === 'location_id') {
-            const loc = state.locations.find(l => l.id === sel.value);
-            state.form.local_union = loc?.local_union || '';
-          }
+          state.form[sel.dataset.field] = sel.value;
           render();
         };
       });
@@ -144,20 +160,24 @@ export default {
       wrap.querySelector('[data-action="continue"]').onclick = () => submitStep1({ thenStep2: true });
     }
 
-    function pickerRow({ label, id, items, labelFn, modalType }) {
-      const sel = state.form[id] || '';
-      return `
-        <div style="margin-top:8px">
-          <label>${esc(label)}</label>
-          <div class="row" style="gap:6px">
-            <select class="grow" data-field="${esc(id)}">
-              <option value="">— Select —</option>
-              ${items.map(i => `<option value="${esc(i.id)}" ${i.id === sel ? 'selected' : ''}>${esc(labelFn(i))}</option>`).join('')}
-            </select>
-            <button class="btn secondary" data-add="${esc(modalType)}" data-target="${esc(id)}" style="min-width:48px;padding:8px 12px">+</button>
-          </div>
-        </div>
-      `;
+    function applyPickSideEffects(id, pickedId, item) {
+      if (id === 'customer_contact_id' && !state.siteContactManuallyEdited) {
+        state.form.site_contact_id = pickedId || '';
+      }
+      if (id === 'site_contact_id') {
+        // Any explicit user pick stops auto-mirroring (intent: "I've
+        // decided site is this person") even when it matches the current
+        // customer contact.
+        state.siteContactManuallyEdited = true;
+      }
+      if (id === 'location_id') {
+        const loc = item || state.locations.find(l => l.id === pickedId);
+        state.form.local_union = loc?.local_union || '';
+        // miles_from_hq lives on the same locations row — pull alongside
+        // local_union so the quote knows the mileage cost basis without
+        // a separate manual entry.
+        state.form.miles_from_hq = (loc?.miles_from_hq != null) ? loc.miles_from_hq : '';
+      }
     }
 
     async function submitStep1({ thenStep2 }) {
@@ -318,7 +338,11 @@ export default {
 
         <div class="btn-row" style="margin-top:16px">
           <button class="btn secondary" data-action="back" ${state.busy ? 'disabled' : ''}>Back</button>
-          <button class="btn accent" data-action="mark-won" ${state.busy || (t.lengthMismatch && !state.lengthAck) ? 'disabled' : ''}>Mark Won + Create Project</button>
+          <button class="btn secondary" data-action="save-draft" ${state.busy ? 'disabled' : ''}>Save draft</button>
+        </div>
+        <button class="btn accent block" data-action="mark-won" style="margin-top:8px" ${state.busy || (t.lengthMismatch && !state.lengthAck) ? 'disabled' : ''}>Mark Won + Create Project</button>
+        <div class="muted small" style="text-align:center;margin-top:6px">
+          Save draft persists the estimate to this bid without marking it won. Reopen the bid on desktop to keep editing.
         </div>
       `;
       root.appendChild(wrap);
@@ -345,7 +369,47 @@ export default {
       wrap.querySelector('[data-action="add-line"]').onclick = () => { state.quote.lines.push(newLine()); render(); };
       const ack = wrap.querySelector('[data-ack]'); if (ack) ack.onchange = () => { state.lengthAck = ack.checked; render(); };
       wrap.querySelector('[data-action="back"]').onclick = () => { state.step = 1; render(); };
+      wrap.querySelector('[data-action="save-draft"]').onclick = saveDraftQuote;
       wrap.querySelector('[data-action="mark-won"]').onclick = runQuickProject;
+    }
+
+    // Save quote lines + top-level fields to the bid in draft status. No
+    // /generate, no /quick-project. Stays on step 2 so the PM can keep
+    // tweaking or come back to it on desktop.
+    async function saveDraftQuote() {
+      state.busy = true; state.error = ''; render();
+      try {
+        const payload = buildQuotePayload();
+        if (payload.error) { state.error = payload.error; state.busy = false; render(); return; }
+        await api(`/bids/${state.bidId}/quote`, { method: 'POST', body: JSON.stringify(payload.body) });
+        ctx.toast(`Estimate saved to bid ${state.bidNumber}`, 'ok');
+        state.busy = false;
+        render();
+      } catch (e) {
+        state.error = e.message || 'Save failed';
+        state.busy = false;
+        render();
+      }
+    }
+
+    function buildQuotePayload() {
+      const body = {
+        markup_pct: parseFloat(state.quote.markup_pct) || 0,
+        project_length_days: parseInt(state.quote.project_length_days, 10) || 0,
+        per_diem_rate: parseFloat(state.quote.per_diem_rate) || 0,
+        lines: state.quote.lines
+          .filter(l => l.classification && ((parseFloat(l.st_hours) || 0) + (parseFloat(l.ot_hours) || 0) + (parseFloat(l.dt_hours) || 0)) > 0)
+          .map(l => ({
+            classification: l.classification,
+            personnel: parseInt(l.personnel, 10) || 0,
+            st_hours: parseFloat(l.st_hours) || 0,
+            ot_hours: parseFloat(l.ot_hours) || 0,
+            dt_hours: parseFloat(l.dt_hours) || 0,
+          })),
+      };
+      if (!body.lines.length) return { error: 'Add at least one line with hours' };
+      if (!body.project_length_days) return { error: 'Project length (days) is required' };
+      return { body };
     }
 
     function renderLine(ln, i) {
@@ -375,29 +439,9 @@ export default {
     async function runQuickProject() {
       state.busy = true; state.error = ''; render();
       try {
-        const payload = {
-          markup_pct: parseFloat(state.quote.markup_pct) || 0,
-          project_length_days: parseInt(state.quote.project_length_days, 10) || 0,
-          per_diem_rate: parseFloat(state.quote.per_diem_rate) || 0,
-          lines: state.quote.lines
-            .filter(l => l.classification && ((parseFloat(l.st_hours) || 0) + (parseFloat(l.ot_hours) || 0) + (parseFloat(l.dt_hours) || 0)) > 0)
-            .map(l => ({
-              classification: l.classification,
-              personnel: parseInt(l.personnel, 10) || 0,
-              st_hours: parseFloat(l.st_hours) || 0,
-              ot_hours: parseFloat(l.ot_hours) || 0,
-              dt_hours: parseFloat(l.dt_hours) || 0,
-            })),
-        };
-        if (!payload.lines.length) {
-          state.error = 'Add at least one line with hours';
-          state.busy = false; render(); return;
-        }
-        if (!payload.project_length_days) {
-          state.error = 'Project length (days) is required';
-          state.busy = false; render(); return;
-        }
-        await api(`/bids/${state.bidId}/quote`, { method: 'POST', body: JSON.stringify(payload) });
+        const payload = buildQuotePayload();
+        if (payload.error) { state.error = payload.error; state.busy = false; render(); return; }
+        await api(`/bids/${state.bidId}/quote`, { method: 'POST', body: JSON.stringify(payload.body) });
         await api(`/bids/${state.bidId}/generate`, { method: 'POST', body: JSON.stringify({}) }).catch(() => {});
         await api(`/bids/${state.bidId}/quick-project`, { method: 'POST', body: JSON.stringify({}) });
         ctx.toast(`Project created from bid ${state.bidNumber}`, 'ok');
@@ -417,7 +461,7 @@ export default {
         customer_id: '', customer_contact_id: '', site_contact_id: '',
         location_id: '', project_scope: '', description: '',
         assigned_pm_id: (ctx.session?.user?.role === 'project_manager') ? ctx.session.user.id : '',
-        local_union: '',
+        local_union: '', miles_from_hq: '',
       };
       state.siteContactManuallyEdited = false;
       state.quote = { markup_pct: keepMarkup, project_length_days: '', per_diem_rate: 0, lines: [] };
