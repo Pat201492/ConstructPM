@@ -200,7 +200,11 @@ const SavedExportRunner = {
 
         for (const r of recipients) {
           if (!r.email) {
-            failed++;
+            // A no-email recipient blocks every format we would have
+            // sent to them — increment by attachments.length so the
+            // counter stays in "send attempts" units (matches the
+            // composed path which adds toList.length per attachment).
+            failed += attachments.length;
             deliveryErrors.push(`${r.id}: no email on file`);
             continue;
           }
