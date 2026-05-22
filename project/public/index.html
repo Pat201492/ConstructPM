@@ -8113,14 +8113,12 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
 
   emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Subject'));
   const subjInp = h('input',{type:'text',value:initial.email_subject||'',
-    placeholder:'Scheduled export — {{name}}',
     style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px'});
   emailWrap.append(subjInp);
 
   emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Body (HTML)'));
   const bodyTA = h('textarea',{
     style:'width:100%;min-height:140px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
-    placeholder:'<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC. CSV attached.</p>',
   });
   bodyTA.value = initial.email_body_html || '';
   emailWrap.append(bodyTA);
@@ -8248,9 +8246,34 @@ function mountRecipientPicker(container, selectedSet, opts) {
     });
   }
 
+  // Keyboard nav state — currentMatches mirrors what's rendered; activeIdx
+  // is the highlight pointer. Both reset to 0 on every renderDropdown so a
+  // fresh query starts with the top match pre-highlighted.
+  let currentMatches = [];
+  let rowEls = [];
+  let activeIdx = 0;
+
+  function highlightActive() {
+    rowEls.forEach((el, i) => {
+      el.style.background = i === activeIdx ? 'var(--bg3)' : '';
+    });
+    const el = rowEls[activeIdx];
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function pick(u) {
+    selectedSet.add(u.id);
+    input.value = '';
+    renderChips();
+    renderDropdown();
+    input.focus();
+  }
+
   function renderDropdown() {
     const q = input.value.trim().toLowerCase();
-    const matches = allUsers
+    currentMatches = allUsers
       .filter(u => !selectedSet.has(u.id))
       .filter(u => {
         if (!q) return true;
@@ -8259,30 +8282,26 @@ function mountRecipientPicker(container, selectedSet, opts) {
       })
       .slice(0, maxResults);
     dropdown.innerHTML = '';
-    if (matches.length === 0) {
+    rowEls = [];
+    activeIdx = 0;
+    if (currentMatches.length === 0) {
       const remaining = allUsers.length - selectedSet.size;
       const msg = remaining <= 0 ? 'All active users added.' : 'No match.';
       dropdown.append(h('div',{style:'padding:6px 10px;font-size:11px;color:var(--text3)'}, msg));
     } else {
-      matches.forEach(u => {
+      currentMatches.forEach((u, idx) => {
         const row = h('div',{
           style:'padding:6px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)',
-          onmouseenter:(e)=>{e.currentTarget.style.background='var(--bg3)';},
-          onmouseleave:(e)=>{e.currentTarget.style.background='';},
-          // Use mousedown — input's blur fires before click would, hiding
-          // the dropdown before the click handler runs. mousedown beats blur.
-          onmousedown:(e)=>{
-            e.preventDefault();
-            selectedSet.add(u.id);
-            input.value = '';
-            renderChips();
-            renderDropdown();
-            input.focus();
-          },
+          onmouseenter:()=>{ activeIdx = idx; highlightActive(); },
+          // mousedown beats the input's blur (which would tear the
+          // dropdown down before a plain click could register).
+          onmousedown:(e)=>{ e.preventDefault(); pick(u); },
         });
         row.append(document.createTextNode(userLabel(u)));
         dropdown.append(row);
+        rowEls.push(row);
       });
+      highlightActive();
     }
     dropdown.style.display = 'block';
   }
@@ -8290,6 +8309,30 @@ function mountRecipientPicker(container, selectedSet, opts) {
   input.oninput = renderDropdown;
   input.onfocus = renderDropdown;
   input.onblur  = () => { setTimeout(()=>{ dropdown.style.display = 'none'; }, 120); };
+  // ArrowDown / ArrowUp move the highlight, Enter picks, Esc hides.
+  // Stop propagation on Enter so the modal's surrounding form / save
+  // button can't grab it.
+  input.onkeydown = (e) => {
+    if (currentMatches.length === 0) {
+      if (e.key === 'Escape') dropdown.style.display = 'none';
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIdx = (activeIdx + 1) % currentMatches.length;
+      highlightActive();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIdx = (activeIdx - 1 + currentMatches.length) % currentMatches.length;
+      highlightActive();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      pick(currentMatches[activeIdx]);
+    } else if (e.key === 'Escape') {
+      dropdown.style.display = 'none';
+    }
+  };
 
   renderChips();
 
