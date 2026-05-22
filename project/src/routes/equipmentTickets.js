@@ -429,14 +429,28 @@ router.post('/:ticketNumber/ready', authorize('equipment:read'), async (req, res
     const project = await db('ticket_project').where('ticket_number', tn).first();
     if (!project) return res.status(404).json({ error: 'Ticket not found' });
 
-    // Require something filled first — clicking Ready on an empty ticket
-    // would mean "notify the requestor we've staged nothing," which is
-    // never the intent.
-    if (project.status === 'open') {
-      return res.status(409).json({ error: 'Ticket has no scanned items yet — fill it before marking ready' });
-    }
     if (project.status === 'picked_up') {
       return res.status(409).json({ error: 'Ticket already picked up' });
+    }
+
+    // Require something filled first — clicking Ready on an empty ticket
+    // would mean "notify the requestor we've staged nothing," which is
+    // never the intent. Inspect the live filled_items list rather than
+    // ticket_project.status because /fill never flips status to 'filled'
+    // (only the older /ready-for-pickup deferred-pipeline endpoint did),
+    // so mobile users who scanned via /fill were stuck at status='open'
+    // and hit this gate even after staging items.
+    const firstLine = await db('ticket_equipment').where('ticket_number', tn).first('filled_items');
+    let filledCount = 0;
+    if (firstLine?.filled_items) {
+      try {
+        const arr = typeof firstLine.filled_items === 'string'
+          ? JSON.parse(firstLine.filled_items) : firstLine.filled_items;
+        filledCount = Array.isArray(arr) ? arr.length : 0;
+      } catch {}
+    }
+    if (filledCount === 0) {
+      return res.status(409).json({ error: 'Ticket has no scanned items yet — fill it before marking ready' });
     }
 
     const readyAt = new Date();
