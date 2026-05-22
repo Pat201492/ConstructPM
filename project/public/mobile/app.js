@@ -154,6 +154,11 @@ async function render() {
   }
   if (hash === 'login') return renderLogin();
   if (hash === 'no-features') return renderNoFeatures();
+  // Forced reset on first login — block all profile routes until the
+  // user picks a new password. Server clears the flag on success.
+  if (session.user?.must_change_password || hash === 'force-change-password') {
+    return renderForceChangePassword();
+  }
 
   const [prof, screenPath] = hash.split('/');
   const list = ROUTES[prof];
@@ -275,6 +280,50 @@ function renderLogin() {
       err.textContent = ex.message || 'Sign-in failed';
     }
   };
+}
+
+function renderForceChangePassword() {
+  app.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'login';
+  wrap.innerHTML = `
+    <h1>Set a new password</h1>
+    <p class="muted small" style="margin:-12px 0 16px">Your account is using a temporary password. Choose a new one to continue.</p>
+    <form>
+      <div><label>Current password</label><input id="fp-current" type="password" autocomplete="current-password" required /></div>
+      <div><label>New password</label><input id="fp-new" type="password" autocomplete="new-password" minlength="8" placeholder="Min 8 characters" required /></div>
+      <div><label>Confirm new password</label><input id="fp-confirm" type="password" autocomplete="new-password" required /></div>
+      <button class="btn block accent" type="submit">Save new password</button>
+      <button class="btn secondary block" type="button" data-logout>Sign out</button>
+      <div class="muted small" data-err style="color:var(--danger)"></div>
+    </form>
+  `;
+  app.appendChild(wrap);
+  const form = wrap.querySelector('form');
+  const err = wrap.querySelector('[data-err]');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn.disabled) return; // guard rapid double-tap race
+    err.textContent = '';
+    const cur = wrap.querySelector('#fp-current').value;
+    const np = wrap.querySelector('#fp-new').value;
+    const cf = wrap.querySelector('#fp-confirm').value;
+    if (np.length < 8) { err.textContent = 'New password must be at least 8 characters'; return; }
+    if (np !== cf) { err.textContent = 'New passwords do not match'; return; }
+    submitBtn.disabled = true;
+    try {
+      await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword: cur, newPassword: np }) });
+      if (session.user) session.user.must_change_password = false;
+      routeToDefault();
+      render();
+      startBadgePoll();
+    } catch (ex) {
+      err.textContent = ex.message || 'Save failed';
+      submitBtn.disabled = false;
+    }
+  };
+  wrap.querySelector('[data-logout]').onclick = () => { logout(); render(); };
 }
 
 function renderNoFeatures() {
