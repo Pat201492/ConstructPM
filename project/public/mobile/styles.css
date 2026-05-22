@@ -204,6 +204,7 @@ textarea { min-height: 96px; resize: vertical; }
 }
 .toast.danger { background: var(--danger); }
 .toast.ok { background: var(--ok); }
+.toast.warn { background: var(--warn); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* Empty state */
