@@ -1,8 +1,8 @@
 // Equipment Entry — Shop Staff mobile screen.
 //
 // Scan a barcode → form pre-fills barcode_id → user fills required fields
-// (manufacturer, equipment_name, equipment_type, equipment_subtype) plus
-// optional cert date → POST /equipment/mobile/entry upserts. No email.
+// (manufacturer, equipment_name, equipment_type) plus optional cert
+// date → POST /equipment/mobile/entry upserts. No email.
 
 import { api } from '../lib/api.js';
 
@@ -16,7 +16,7 @@ export default {
       error: '',
     };
 
-    // Prefetch options for the datalists (types/subtypes/names suggestions).
+    // Prefetch options for the datalists (types/names suggestions).
     api('/equipment-tickets/equipment-options')
       .then(opts => { state.eqOptions = opts; render(); })
       .catch(() => {});
@@ -68,7 +68,6 @@ export default {
         state.form.manufacturer = existing.manufacturer || '';
         state.form.equipment_name = existing.equipment_name || '';
         state.form.equipment_type = existing.equipment_type || '';
-        state.form.equipment_subtype = existing.equipment_subtype || '';
         state.form.certification_date = (existing.certification_date || '').slice(0, 10);
         ctx.toast('Existing entry — editing', 'ok');
       } catch {
@@ -99,10 +98,6 @@ export default {
               <input name="equipment_type" list="dl-eq-type" value="${esc(state.form.equipment_type)}" required />
               <datalist id="dl-eq-type">${optList(uniq(items.map(i => i.equipment_type)))}</datalist>
             </div>
-            <div><label>Subtype <span style="color:var(--danger)">*</span></label>
-              <input name="equipment_subtype" list="dl-eq-sub" value="${esc(state.form.equipment_subtype)}" required />
-              <datalist id="dl-eq-sub">${optList(uniq(items.map(i => i.equipment_subtype)))}</datalist>
-            </div>
             <div><label>Certification date (optional)</label>
               <input type="date" name="certification_date" value="${esc(state.form.certification_date)}" />
             </div>
@@ -126,7 +121,6 @@ export default {
           equipment_name: f.equipment_name.value.trim(),
           manufacturer: f.manufacturer.value.trim(),
           equipment_type: f.equipment_type.value.trim(),
-          equipment_subtype: f.equipment_subtype.value.trim(),
           certification_date: f.certification_date.value || '',
         };
         const missing = Object.entries(state.form)
@@ -146,7 +140,6 @@ export default {
               manufacturer: state.form.manufacturer,
               equipment_name: state.form.equipment_name,
               equipment_type: state.form.equipment_type,
-              equipment_subtype: state.form.equipment_subtype,
               certification_date: state.form.certification_date || null,
             }),
           });
@@ -165,7 +158,7 @@ export default {
 };
 
 function emptyForm() {
-  return { barcode_id: '', equipment_name: '', manufacturer: '', equipment_type: '', equipment_subtype: '', certification_date: '' };
+  return { barcode_id: '', equipment_name: '', manufacturer: '', equipment_type: '', certification_date: '' };
 }
 function uniq(arr) { return [...new Set((arr || []).filter(Boolean))].sort(); }
 function optList(arr) { return arr.map(v => `<option value="${esc(v)}"></option>`).join(''); }

@@ -83,25 +83,22 @@ async function nextTicketNumber(trx) {
 // CASCADING EQUIPMENT LOOKUP
 // ═══════════════════════════════════════════════════════════
 //
-// The request form needs reducing lists. Given any of type / subtype /
-// name, return the distinct options for the others, plus the matching
+// The request form needs reducing lists. Given any of type / name,
+// return the distinct options for the others, plus the matching
 // equipment rows. Empty filters → all distinct values.
 router.get('/equipment-options', authorize('equipment:read'), async (req, res, next) => {
   try {
-    const { equipment_type, equipment_subtype, equipment_name } = req.query;
+    const { equipment_type, equipment_name } = req.query;
     let q = db('equipment').whereNot('status', 'retired');
     if (equipment_type) q = q.where('equipment_type', equipment_type);
-    if (equipment_subtype) q = q.where('equipment_subtype', equipment_subtype);
     if (equipment_name) q = q.where('equipment_name', equipment_name);
     const rows = await q.select(
-      'id', 'barcode_id', 'equipment_name', 'equipment_type',
-      'equipment_subtype', 'manufacturer'
+      'id', 'barcode_id', 'equipment_name', 'equipment_type', 'manufacturer'
     );
 
     const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort();
     res.json({
       types: uniq(rows.map(r => r.equipment_type)),
-      subtypes: uniq(rows.map(r => r.equipment_subtype)),
       names: uniq(rows.map(r => r.equipment_name)),
       manufacturers: uniq(rows.map(r => r.manufacturer)),
       items: rows,
@@ -116,7 +113,7 @@ router.get('/equipment-options', authorize('equipment:read'), async (req, res, n
 // Body: { project_id?, project_number, pickup_person, requestor_name,
 //         location_name, location_address, site_contact_name,
 //         site_contact_phone, lines: [{quantity, equipment_name,
-//         equipment_type, equipment_subtype, manufacturer}] }
+//         equipment_type, manufacturer}] }
 router.post('/', authorize('equipment:read'), async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -175,7 +172,6 @@ router.post('/', authorize('equipment:read'), async (req, res, next) => {
         quantity: parseInt(l.quantity, 10) || 1,
         equipment_name: l.equipment_name || null,
         equipment_type: l.equipment_type || null,
-        equipment_subtype: l.equipment_subtype || null,
         manufacturer: l.manufacturer || null,
         filled_items: JSON.stringify([]),
       }));
@@ -345,7 +341,6 @@ router.patch('/:ticketNumber/lines', authorize('equipment:read'), async (req, re
           quantity: parseInt(l.quantity, 10) || 1,
           equipment_name: l.equipment_name || null,
           equipment_type: l.equipment_type || null,
-          equipment_subtype: l.equipment_subtype || null,
           manufacturer: l.manufacturer || null,
           filled_items: JSON.stringify([]),
         })));
@@ -647,8 +642,7 @@ async function generateTicketPdf(project, lines, filled) {
   y -= 8;
   line('Requested Equipment', { size: 13, bold: true, gap: 22 });
   for (const l of lines) {
-    const detail = l.equipment_type
-      ? ` (${l.equipment_type}${l.equipment_subtype ? ' / ' + l.equipment_subtype : ''})` : '';
+    const detail = l.equipment_type ? ` (${l.equipment_type})` : '';
     line(`  ${l.quantity} x ${l.equipment_name || '—'}${detail}`);
   }
 

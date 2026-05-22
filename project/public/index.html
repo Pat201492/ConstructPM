@@ -1438,11 +1438,11 @@ async function renderDashEquipment(main) {
       main.append(h('p',{style:'color:var(--text2);font-style:italic;padding:8px'},'No equipment in shop.'));
     } else {
       main.append(makeConfigTable('dash_equipment_shop',
-        ['Barcode','Name','Manufacturer','Type','Sub-type','Status','Cert Date'],
+        ['Barcode','Name','Manufacturer','Type','Status','Cert Date'],
         data.shop.map(e => [
           h('span',{style:'font-family:JetBrains Mono'}, e.barcode_id),
           e.equipment_name, e.manufacturer || '—',
-          e.equipment_type || '—', e.equipment_subtype || '—',
+          e.equipment_type || '—',
           h('span',{className:'status status-'+e.status}, e.status),
           fmtDtClick(e.certification_date),
         ])
@@ -1460,10 +1460,10 @@ async function renderDashEquipment(main) {
       // Per-project table — separate localStorage config key per project
       // would balloon, so all per-project tables share one config key.
       main.append(makeConfigTable('dash_equipment_project',
-        ['Barcode','Name','Type','Sub-type','Status'],
+        ['Barcode','Name','Type','Status'],
         proj.items.map(e => [
           h('span',{style:'font-family:JetBrains Mono'}, e.barcode_id),
-          e.equipment_name, e.equipment_type || '—', e.equipment_subtype || '—',
+          e.equipment_name, e.equipment_type || '—',
           h('span',{className:'status status-'+e.status}, e.status),
         ])
       ));
@@ -4225,22 +4225,22 @@ async function etRequest(c){
 
   // ── Cascading equipment line items (quick-bid style) ──
   c.append(h('h3',{style:'margin:18px 0 8px'},'Equipment'));
-  let opts={types:[],subtypes:[],names:[],items:[]};
+  let opts={types:[],names:[],items:[]};
   try { opts=await api('/equipment-tickets/equipment-options'); }
   catch{ try{ opts=await api('/equipment-tickets/equipment-options'); }catch{} }
 
-  const lines=[{quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''}];
+  const lines=[{quantity:1,equipment_type:'',equipment_name:'',manufacturer:''}];
   const tbl=h('table',{className:'data-table',style:'width:100%'});
   const tb=h('tbody');
-  tbl.innerHTML='<thead><tr><th style="width:60px">Qty</th><th>Type</th><th>Subtype</th><th>Equipment Name</th><th>Manufacturer</th><th></th></tr></thead>';
+  tbl.innerHTML='<thead><tr><th style="width:60px">Qty</th><th>Type</th><th>Equipment Name</th><th>Manufacturer</th><th></th></tr></thead>';
   tbl.append(tb);
   c.append(tbl);
 
-  // Datalist-backed inputs so the picker filters as you type. The four
+  // Datalist-backed inputs so the picker filters as you type. The three
   // equipment fields are bidirectional: changing any one narrows the
   // pool of matching items, and if exactly one item is left we backfill
-  // the other three from it. Lets users start from whichever field they
-  // know best (name, manufacturer, subtype...) without re-picking the
+  // the other two from it. Lets users start from whichever field they
+  // know best (name, manufacturer, type...) without re-picking the
   // cascade top-down.
   function datalistOptions(arr){
     return [...new Set(arr.filter(Boolean))].sort().map(v=>`<option value="${(v+'').replace(/"/g,'&quot;')}"></option>`).join('');
@@ -4248,7 +4248,6 @@ async function etRequest(c){
   function matchingItems(line){
     return (opts.items||[]).filter(it =>
       (!line.equipment_type || it.equipment_type === line.equipment_type) &&
-      (!line.equipment_subtype || it.equipment_subtype === line.equipment_subtype) &&
       (!line.equipment_name || it.equipment_name === line.equipment_name) &&
       (!line.manufacturer || it.manufacturer === line.manufacturer)
     );
@@ -4257,7 +4256,6 @@ async function etRequest(c){
     const items = matchingItems(line);
     return {
       types: [...new Set(items.map(i=>i.equipment_type))],
-      subtypes: [...new Set(items.map(i=>i.equipment_subtype))],
       names: [...new Set(items.map(i=>i.equipment_name))],
       manufacturers: [...new Set(items.map(i=>i.manufacturer))],
     };
@@ -4271,9 +4269,7 @@ async function etRequest(c){
         <td><input type="text" inputmode="numeric" value="${parseInt(ln.quantity)||1}" data-i="${i}" data-f="quantity" style="width:50px"></td>
         <td><input data-i="${i}" data-f="equipment_type" list="etr-types-${i}" value="${(ln.equipment_type||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:160px">
             <datalist id="etr-types-${i}">${datalistOptions(fo.types)}</datalist></td>
-        <td><input data-i="${i}" data-f="equipment_subtype" list="etr-subs-${i}" value="${(ln.equipment_subtype||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:160px">
-            <datalist id="etr-subs-${i}">${datalistOptions(fo.subtypes)}</datalist></td>
-        <td><input data-i="${i}" data-f="equipment_name" list="etr-names-${i}" value="${(ln.equipment_name||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:220px">
+        <td><input data-i="${i}" data-f="equipment_name" list="etr-names-${i}" value="${(ln.equipment_name||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:240px">
             <datalist id="etr-names-${i}">${datalistOptions(fo.names)}</datalist></td>
         <td><input data-i="${i}" data-f="manufacturer" list="etr-mfrs-${i}" value="${(ln.manufacturer||'').replace(/"/g,'&quot;')}" placeholder="Type to filter…" style="max-width:160px">
             <datalist id="etr-mfrs-${i}">${datalistOptions(fo.manufacturers)}</datalist></td>
@@ -4295,11 +4291,8 @@ async function etRequest(c){
         lines[i][f] = el.value;
         // After any equipment-field commit, look at all items matching
         // every filled field. If exactly one item is left, the user has
-        // implicitly identified the row — fill the unset fields. This is
-        // the bidirectional autofill: pick a name and type/subtype/mfr
-        // fill in; pick a manufacturer and name/type/subtype fill in (if
-        // unambiguous), etc.
-        const fields = ['equipment_type','equipment_subtype','equipment_name','manufacturer'];
+        // implicitly identified the row — fill the unset fields.
+        const fields = ['equipment_type','equipment_name','manufacturer'];
         const match = matchingItems(lines[i]);
         if (match.length === 1) {
           fields.forEach(k => {
@@ -4316,14 +4309,14 @@ async function etRequest(c){
     });
     tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       lines.splice(parseInt(b.dataset.del),1);
-      if (lines.length === 0) lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+      if (lines.length === 0) lines.push({quantity:1,equipment_type:'',equipment_name:'',manufacturer:''});
       renderLines();
     });
   }
   renderLines();
 
   const addBtn=h('button',{className:'btn-outline btn-sm',style:'margin-top:8px',onclick:()=>{
-    lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+    lines.push({quantity:1,equipment_type:'',equipment_name:'',manufacturer:''});
     renderLines();
   }},'+ Add line');
   c.append(addBtn);
@@ -4384,7 +4377,7 @@ async function etMaintenance(c){
       `⚠ ${warned.length} piece(s) of equipment need certification attention`);
     const detail=h('div',{style:'display:none;margin-top:8px;font-weight:400;font-size:12px'});
     warned.forEach(w=>detail.append(h('div',{},
-      `#${w.e.barcode_id} · ${w.e.equipment_name} · ${w.e.equipment_type||'—'}${w.e.equipment_subtype?' / '+w.e.equipment_subtype:''} · cert ${String(w.e.rolled_cert_date||w.e.certification_date||'—').slice(0,10)}`)));
+      `#${w.e.barcode_id} · ${w.e.equipment_name} · ${w.e.equipment_type||'—'} · cert ${String(w.e.rolled_cert_date||w.e.certification_date||'—').slice(0,10)}`)));
     banner.style.cursor='pointer';
     banner.onclick=()=>{ detail.style.display=detail.style.display==='none'?'block':'none'; };
     banner.append(detail);
@@ -4398,8 +4391,7 @@ async function etMaintenance(c){
   const searchRow=h('div',{style:'display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center'});
   const sId=h('input',{placeholder:'Equipment ID (Enter to scan)',style:'width:200px'});
   const sType=h('input',{placeholder:'Type',style:'width:140px'});
-  const sSub=h('input',{placeholder:'Subtype',style:'width:140px'});
-  searchRow.append(sId,sType,sSub);
+  searchRow.append(sId,sType);
   c.append(searchRow);
 
   sId.addEventListener('keydown', (e) => {
@@ -4429,21 +4421,20 @@ async function etMaintenance(c){
   c.append(listDiv);
 
   function draw(){
-    const fId=sId.value.toLowerCase(), fT=sType.value.toLowerCase(), fS=sSub.value.toLowerCase();
+    const fId=sId.value.toLowerCase(), fT=sType.value.toLowerCase();
     const rows=equip.filter(e=>
       (!fId||String(e.barcode_id||'').toLowerCase().includes(fId))&&
-      (!fT||String(e.equipment_type||'').toLowerCase().includes(fT))&&
-      (!fS||String(e.equipment_subtype||'').toLowerCase().includes(fS)));
+      (!fT||String(e.equipment_type||'').toLowerCase().includes(fT)));
     listDiv.innerHTML='';
     if(rows.length===0){ listDiv.append(h('p',{style:'color:var(--text2);font-style:italic'},'No equipment matches.')); return; }
-    listDiv.append(makeTable(['ID','Name','Type','Subtype','Service','Cert','Flag',''],rows.map(e=>{
+    listDiv.append(makeTable(['ID','Name','Type','Service','Cert','Flag',''],rows.map(e=>{
       const flagDot = e.flag
         ? h('span',{title:'Click to clear flag',style:`display:inline-block;width:14px;height:14px;border-radius:50%;cursor:pointer;background:${e.flag==='red'?'var(--red,#c62828)':'#e6a700'}`,
             onclick:async()=>{ if(!confirm('Clear the flag on '+e.barcode_id+'?')) return;
               try{ await api('/equipment/'+e.id+'/clear-flag',{method:'POST'}); etMaintenance(c); }catch(err){alert(err.message);} }})
         : '—';
       return [
-        e.barcode_id, e.equipment_name, e.equipment_type||'—', e.equipment_subtype||'—',
+        e.barcode_id, e.equipment_name, e.equipment_type||'—',
         String(e.service_date||'—').slice(0,10),
         h('span',{style:certColor(e.rolled_cert_date||e.certification_date)?`color:${certColor(e.rolled_cert_date||e.certification_date)};font-weight:600`:''},String(e.rolled_cert_date||e.certification_date||'—').slice(0,10)),
         flagDot,
@@ -4451,7 +4442,7 @@ async function etMaintenance(c){
       ];
     })));
   }
-  [sId,sType,sSub].forEach(i=>i.oninput=draw);
+  [sId,sType].forEach(i=>i.oninput=draw);
   draw();
 }
 
@@ -4471,7 +4462,7 @@ async function showMaintRecords(equip, onSaved){
   modal.innerHTML='';
   modal.append(h('h2',{},`${equip.barcode_id} — Maintenance Record`));
   modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:12px'},
-    `${equip.equipment_name} · ${equip.equipment_type||'—'}${equip.equipment_subtype?' / '+equip.equipment_subtype:''}`));
+    `${equip.equipment_name} · ${equip.equipment_type||'—'}`));
 
   // Add entry — date defaults today, name defaults current user (editable),
   // cert copied from most recent record
@@ -4685,8 +4676,8 @@ async function showTicketFull(tn){
       showTicketEditLines(d, () => render());
     }},'✎ Edit Lines'));
     modal.append(reqHeader);
-    modal.append(makeTable(['Qty','Type','Subtype','Equipment','Manufacturer'],
-      d.lines.map(l=>[l.quantity,l.equipment_type||'—',l.equipment_subtype||'—',l.equipment_name||'—',l.manufacturer||'—'])));
+    modal.append(makeTable(['Qty','Type','Equipment','Manufacturer'],
+      d.lines.map(l=>[l.quantity,l.equipment_type||'—',l.equipment_name||'—',l.manufacturer||'—'])));
 
     // ─── Scanned / Tagged-Out section ─────────────────────────
     // Lists every equipment ID flowing in from mobile scans or web
@@ -4842,13 +4833,12 @@ function showTicketEditLines(detail, onSaved) {
   const lines = (detail.lines || []).map(l => ({
     quantity: parseInt(l.quantity,10) || 1,
     equipment_type: l.equipment_type || '',
-    equipment_subtype: l.equipment_subtype || '',
     equipment_name: l.equipment_name || '',
     manufacturer: l.manufacturer || '',
   }));
 
   const tbl = h('table',{className:'data-table',style:'width:100%'});
-  tbl.innerHTML = '<thead><tr><th style="width:60px">Qty</th><th>Type</th><th>Subtype</th><th>Equipment Name</th><th>Manufacturer</th><th></th></tr></thead>';
+  tbl.innerHTML = '<thead><tr><th style="width:60px">Qty</th><th>Type</th><th>Equipment Name</th><th>Manufacturer</th><th></th></tr></thead>';
   const tb = h('tbody');
   tbl.append(tb);
   function drawLines() {
@@ -4858,8 +4848,7 @@ function showTicketEditLines(detail, onSaved) {
       tr.innerHTML = `
         <td><input type="text" inputmode="numeric" value="${parseInt(ln.quantity)||1}" data-i="${i}" data-f="quantity" style="width:50px"></td>
         <td><input data-i="${i}" data-f="equipment_type" value="${(ln.equipment_type||'').replace(/"/g,'&quot;')}" style="max-width:160px"></td>
-        <td><input data-i="${i}" data-f="equipment_subtype" value="${(ln.equipment_subtype||'').replace(/"/g,'&quot;')}" style="max-width:160px"></td>
-        <td><input data-i="${i}" data-f="equipment_name" value="${(ln.equipment_name||'').replace(/"/g,'&quot;')}" style="max-width:220px"></td>
+        <td><input data-i="${i}" data-f="equipment_name" value="${(ln.equipment_name||'').replace(/"/g,'&quot;')}" style="max-width:240px"></td>
         <td><input data-i="${i}" data-f="manufacturer" value="${(ln.manufacturer||'').replace(/"/g,'&quot;')}" style="max-width:160px"></td>
         <td><button class="btn-red btn-sm" data-del="${i}" style="padding:2px 8px">×</button></td>`;
       tb.append(tr);
@@ -4873,7 +4862,7 @@ function showTicketEditLines(detail, onSaved) {
     });
     tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       lines.splice(parseInt(b.dataset.del), 1);
-      if (lines.length === 0) lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+      if (lines.length === 0) lines.push({quantity:1,equipment_type:'',equipment_name:'',manufacturer:''});
       drawLines();
     });
   }
@@ -4881,7 +4870,7 @@ function showTicketEditLines(detail, onSaved) {
   modal.append(tbl);
 
   modal.append(h('button',{className:'btn-outline btn-sm',style:'margin-top:8px',onclick:()=>{
-    lines.push({quantity:1,equipment_type:'',equipment_subtype:'',equipment_name:'',manufacturer:''});
+    lines.push({quantity:1,equipment_type:'',equipment_name:'',manufacturer:''});
     drawLines();
   }},'+ Add line'));
 
@@ -4930,7 +4919,6 @@ async function refreshEquipmentList(content, canManage) {
       <div class="form-group"><label>Name *</label><input id="eq-name" placeholder="e.g. Milwaukee M18 Drill"></div>
       <div class="form-group"><label>Manufacturer</label><input id="eq-mfr"></div>
       <div class="form-group"><label>Type</label><input id="eq-type" placeholder="e.g. Power Tool" list="eq-type-suggestions"></div>
-      <div class="form-group"><label>Sub-type</label><input id="eq-subtype" placeholder="e.g. Drill"></div>
       <div class="form-group"><label>Cert Date</label><input id="eq-cert" type="date"></div>
     </div>
     <datalist id="eq-type-suggestions"></datalist>`;
@@ -4946,7 +4934,6 @@ async function refreshEquipmentList(content, canManage) {
           equipment_name: name,
           manufacturer: $('#eq-mfr').value || null,
           equipment_type: $('#eq-type').value || null,
-          equipment_subtype: $('#eq-subtype').value || null,
           certification_date: $('#eq-cert').value || null,
         })});
         await refreshEquipmentList(content, canManage);
@@ -4979,7 +4966,7 @@ async function refreshEquipmentList(content, canManage) {
       return;
     }
 
-    const headers = ['Barcode','Name','Manufacturer','Type','Sub-type','Status','Cert Date'];
+    const headers = ['Barcode','Name','Manufacturer','Type','Status','Cert Date'];
     if (canManage) headers.push('');  // action column
     content.append(makeConfigTable('equipment_management',
       headers,
@@ -4989,7 +4976,6 @@ async function refreshEquipmentList(content, canManage) {
           e.equipment_name,
           e.manufacturer || '—',
           e.equipment_type || '—',
-          e.equipment_subtype || '—',
           h('span',{className:'status status-'+e.status}, e.status),
           fmtDtClick(e.certification_date),
         ];
@@ -5047,7 +5033,6 @@ async function showEquipmentEditPopup(item, onSaved) {
   field('eqe-name', 'Name', 'text', item.equipment_name);
   field('eqe-mfr', 'Manufacturer', 'text', item.manufacturer);
   field('eqe-type', 'Type', 'text', item.equipment_type);
-  field('eqe-subtype', 'Sub-type', 'text', item.equipment_subtype);
   field('eqe-cert', 'Cert Date', 'date', item.certification_date ? String(item.certification_date).split('T')[0] : '');
   modal.append(grid);
 
@@ -5064,7 +5049,6 @@ async function showEquipmentEditPopup(item, onSaved) {
         equipment_name: $('#eqe-name').value,
         manufacturer: $('#eqe-mfr').value || null,
         equipment_type: $('#eqe-type').value || null,
-        equipment_subtype: $('#eqe-subtype').value || null,
         certification_date: $('#eqe-cert').value || null,
         notes: $('#eqe-notes').value || null,
       })});

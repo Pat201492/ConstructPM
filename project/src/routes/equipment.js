@@ -145,15 +145,15 @@ router.get('/barcode/:code', authorize('equipment:read'), async (req, res, next)
 // Express doesn't treat "mobile" as an id.
 
 // Barcode equipment entry — mobile scans a barcode, fills the form.
-// Mandatory: manufacturer, equipment_name, equipment_type,
-// equipment_subtype. Optional: certification_date, maintenance date.
+// Mandatory: manufacturer, equipment_name, equipment_type. Optional:
+// certification_date, maintenance date.
 // If the barcode already exists this UPDATES it (re-tagging), else
 // creates. Mandatory-field enforcement is server-side too (the app
 // blocks submit, but never trust only the client).
 router.post('/mobile/entry', authorize('equipment:read'), async (req, res, next) => {
   try {
     const b = req.body || {};
-    const missing = ['barcode_id', 'manufacturer', 'equipment_name', 'equipment_type', 'equipment_subtype']
+    const missing = ['barcode_id', 'manufacturer', 'equipment_name', 'equipment_type']
       .filter(k => !b[k] || !String(b[k]).trim());
     if (missing.length) {
       return res.status(400).json({ error: `Missing required field(s): ${missing.join(', ')}` });
@@ -164,7 +164,6 @@ router.post('/mobile/entry', authorize('equipment:read'), async (req, res, next)
       manufacturer: b.manufacturer,
       equipment_name: b.equipment_name,
       equipment_type: b.equipment_type,
-      equipment_subtype: b.equipment_subtype,
       certification_date: b.certification_date || null,
     };
     let item;
@@ -219,7 +218,7 @@ router.get('/mobile/maintenance/:code', authorize('equipment:read'), async (req,
     res.json({
       equipment: {
         id: item.id, barcode_id: item.barcode_id, equipment_name: item.equipment_name,
-        equipment_type: item.equipment_type, equipment_subtype: item.equipment_subtype,
+        equipment_type: item.equipment_type,
         service_date: item.service_date, rolled_cert_date: item.rolled_cert_date, flag: item.flag,
       },
       records,
@@ -246,9 +245,9 @@ router.post('/', authorize('equipment:manage'),
   [body('barcode_id').trim().notEmpty(), body('equipment_name').trim().notEmpty()],
   async (req, res, next) => {
     try {
-      const { barcode_id, equipment_name, manufacturer, equipment_type, equipment_subtype, certification_date, cert_expiry_alert_days } = req.body;
+      const { barcode_id, equipment_name, manufacturer, equipment_type, certification_date, cert_expiry_alert_days } = req.body;
       const item = await Equipment.create({
-        barcode_id, equipment_name, manufacturer, equipment_type, equipment_subtype,
+        barcode_id, equipment_name, manufacturer, equipment_type,
         certification_date: certification_date || null,
         cert_expiry_alert_days: cert_expiry_alert_days || 30,
       });
@@ -262,7 +261,7 @@ router.post('/', authorize('equipment:manage'),
 
 router.patch('/:id', authorize('equipment:manage'), async (req, res, next) => {
   try {
-    const allowed = ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_subtype', 'certification_date', 'cert_expiry_alert_days', 'notes'];
+    const allowed = ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'certification_date', 'cert_expiry_alert_days', 'notes'];
     const data = {};
     for (const key of allowed) { if (req.body[key] !== undefined) data[key] = req.body[key]; }
     const item = await Equipment.update(req.params.id, data);
@@ -414,7 +413,7 @@ router.get('/:id/maintenance-records', authorize('equipment:read'), async (req, 
     res.json({
       equipment: {
         id: equip.id, barcode_id: equip.barcode_id, equipment_name: equip.equipment_name,
-        equipment_type: equip.equipment_type, equipment_subtype: equip.equipment_subtype,
+        equipment_type: equip.equipment_type,
         service_date: equip.service_date, rolled_cert_date: equip.rolled_cert_date, flag: equip.flag,
       },
       records,

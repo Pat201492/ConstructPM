@@ -10,13 +10,13 @@ import { api } from '../lib/api.js';
 import { pickerHtml, bindPicker } from '../lib/pickers.js';
 
 const projectLabel = (p) => p.primary_number || p.name || p.id;
-const EQ_FIELDS = ['equipment_type', 'equipment_subtype', 'equipment_name', 'manufacturer'];
+const EQ_FIELDS = ['equipment_type', 'equipment_name', 'manufacturer'];
 
 export default {
   async mount(root, ctx) {
     const state = {
       projects: [],
-      eqOptions: { items: [], types: [], subtypes: [], names: [] },
+      eqOptions: { items: [], types: [], names: [] },
       form: {
         project_id: '',
         pickup_person: '',
@@ -35,7 +35,7 @@ export default {
     try {
       const [proj, eq] = await Promise.all([
         api('/projects?status=active&limit=500').catch(() => ({ projects: [] })),
-        api('/equipment-tickets/equipment-options').catch(() => ({ items: [], types: [], subtypes: [], names: [], manufacturers: [] })),
+        api('/equipment-tickets/equipment-options').catch(() => ({ items: [], types: [], names: [], manufacturers: [] })),
       ]);
       state.projects = proj.projects || proj || [];
       state.eqOptions = eq;
@@ -120,7 +120,7 @@ export default {
           // Re-render so the OTHER fields' datalists narrow to whatever is
           // still consistent with the just-set field. Without this each
           // datalist would keep showing every known value globally and the
-          // PM would see Saw subtypes after picking type=Drill.
+          // PM would see Saw names after picking type=Drill.
           render();
         };
       });
@@ -156,7 +156,6 @@ export default {
       const pull = (k) => [...new Set(items.map(i => i[k]).filter(Boolean))].sort();
       return {
         types: pull('equipment_type'),
-        subtypes: pull('equipment_subtype'),
         names: pull('equipment_name'),
         manufacturers: pull('manufacturer'),
       };
@@ -164,7 +163,7 @@ export default {
 
     function renderLine(ln, i) {
       // Datalist IDs unique per line. Options pulled from filteredOpts(ln)
-      // so picking Type=Drill collapses subtype/name/manufacturer to only
+      // so picking Type=Drill collapses name/manufacturer to only
       // drills; picking Manufacturer=DeWalt collapses everything to DeWalt
       // tools. Bidirectional — works from any field.
       const fo = filteredOpts(ln);
@@ -178,11 +177,6 @@ export default {
             <label>Type</label>
             <input data-line="${i}" data-line-field="equipment_type" list="dl-type-${i}" value="${esc(ln.equipment_type)}" placeholder="Type to filter…" />
             <datalist id="dl-type-${i}">${optList(fo.types)}</datalist>
-          </div>
-          <div style="margin-top:8px">
-            <label>Subtype</label>
-            <input data-line="${i}" data-line-field="equipment_subtype" list="dl-sub-${i}" value="${esc(ln.equipment_subtype)}" placeholder="Type to filter…" />
-            <datalist id="dl-sub-${i}">${optList(fo.subtypes)}</datalist>
           </div>
           <div style="margin-top:8px">
             <label>Name</label>
@@ -205,7 +199,7 @@ export default {
         render();
         return;
       }
-      const filledLines = state.lines.filter(l => (l.equipment_type || l.equipment_subtype || l.equipment_name || l.manufacturer));
+      const filledLines = state.lines.filter(l => (l.equipment_type || l.equipment_name || l.manufacturer));
       if (!filledLines.length) {
         state.error = 'Add at least one equipment line';
         render();
@@ -226,7 +220,6 @@ export default {
             quantity: l.quantity || 1,
             equipment_name: l.equipment_name || null,
             equipment_type: l.equipment_type || null,
-            equipment_subtype: l.equipment_subtype || null,
             manufacturer: l.manufacturer || null,
           })),
         };
@@ -252,7 +245,7 @@ export default {
 };
 
 function emptyLine() {
-  return { quantity: 1, equipment_type: '', equipment_subtype: '', equipment_name: '', manufacturer: '' };
+  return { quantity: 1, equipment_type: '', equipment_name: '', manufacturer: '' };
 }
 function defaultRequestorName(session) {
   const u = session?.user;

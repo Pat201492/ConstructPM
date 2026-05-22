@@ -501,7 +501,7 @@ router.get('/import/targets', async (req, res, next) => {
       // Vendors merged into customers — bulk-import vendor companies via
       // the 'customers' target; vendor contact info via 'contacts'.
       rate_sheet: ['local_union', 'classification', 'st_rate', 'ot_rate', 'dt_rate'],
-      equipment: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'equipment_subtype', 'certification_date', 'serial_number', 'notes'],
+      equipment: ['barcode_id', 'equipment_name', 'manufacturer', 'equipment_type', 'certification_date', 'serial_number', 'notes'],
       inventory: ['item_name', 'category', 'sku', 'quantity', 'unit', 'min_stock', 'unit_cost', 'location'],
       // Users — bulk-create accounts. Password is auto-defaulted to
       // 'ChangeMe123!' if the CSV omits it (see /import handler); users

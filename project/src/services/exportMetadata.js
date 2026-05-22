@@ -308,7 +308,6 @@ const SOURCES = {
       { key: 'equipment_name', label: 'Equipment Name' },
       { key: 'manufacturer', label: 'Manufacturer' },
       { key: 'equipment_type', label: 'Type' },
-      { key: 'equipment_subtype', label: 'Sub-type' },
       { key: 'status', label: 'Status' },
       { key: 'current_location', label: 'Current Location' },
       { key: 'certification_date', label: 'Cert Expiry' },

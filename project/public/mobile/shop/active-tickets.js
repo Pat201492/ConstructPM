@@ -117,7 +117,7 @@ export default {
             <div class="row">
               <div class="grow">
                 <div><b>${esc(l.equipment_name || l.equipment_type || '—')}</b></div>
-                <div class="meta">${esc([l.equipment_type, l.equipment_subtype, l.manufacturer].filter(Boolean).join(' • '))}</div>
+                <div class="meta">${esc([l.equipment_type, l.manufacturer].filter(Boolean).join(' • '))}</div>
               </div>
               <div class="badge muted">×${esc(l.quantity || 1)}</div>
             </div>
