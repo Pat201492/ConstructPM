@@ -10,6 +10,7 @@
 // never download PM screens (and vice versa).
 
 import { session, bootSession, login, logout, profile } from './lib/auth.js';
+import { api } from './lib/api.js';
 
 const app = document.getElementById('app');
 
@@ -71,6 +72,10 @@ let badgeTimer = null;
   } else if (!location.hash || location.hash === '#login') {
     routeToDefault();
   }
+  // Pre-fetch unread count BEFORE first render so the bell tab badge is
+  // accurate on initial paint instead of flashing in ~1 network RTT
+  // later when the first poll resolves.
+  if (session.token) await pokeBadge();
   window.addEventListener('hashchange', render);
   render();
   if (session.token) startBadgePoll();
@@ -86,18 +91,23 @@ async function startBadgePoll() {
 }
 
 async function pokeBadge() {
-  if (!session.token) return;
+  // Self-cleaning: if the user logged out (token cleared but the timer
+  // is still firing from a previous session), tear down the interval so
+  // we don't keep noop-polling forever.
+  if (!session.token) {
+    if (badgeTimer) { clearInterval(badgeTimer); badgeTimer = null; }
+    return;
+  }
   try {
-    const r = await fetch('/api/notifications/unread-count', { headers: { 'Authorization': 'Bearer ' + session.token } });
-    if (!r.ok) return;
-    const d = await r.json();
-    const next = Number(d.unread) || 0;
+    // Route through the api() wrapper so a 401 (token expired) triggers
+    // the same logout + redirect as any other authenticated call. The
+    // raw fetch we had before swallowed 401s silently and the badge
+    // froze on its stale count for the rest of the session.
+    const d = await api('/notifications/unread-count');
+    const next = Number(d?.unread) || 0;
     if (next !== badgeState.unread) {
       badgeState.unread = next;
       // In-place DOM patch — cheaper than re-rendering the whole shell.
-      // The badge node lives inside the bell tab; create/update/remove it
-      // depending on the count so the user sees the update within 60s
-      // (or sooner via pokeBadge() called from the notifications screen).
       const bell = document.querySelector('[data-tab-bell] .ico');
       if (bell) {
         let badgeEl = bell.querySelector('[data-badge-count]');
@@ -114,7 +124,10 @@ async function pokeBadge() {
         }
       }
     }
-  } catch {}
+  } catch {
+    // Network errors are silent — next 60s tick retries. The api() helper
+    // already handles the 401 logout path before throwing.
+  }
 }
 export { pokeBadge, badgeState };
 
@@ -251,6 +264,9 @@ function renderLogin() {
     try {
       await login(wrap.querySelector('#email').value.trim(), wrap.querySelector('#pass').value);
       routeToDefault();
+      // Pre-fetch unread count before render so the bell tab badge is
+      // accurate on the first paint after login.
+      await pokeBadge();
       render();
       startBadgePoll();
     } catch (ex) {

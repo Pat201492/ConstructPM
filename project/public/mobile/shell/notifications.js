@@ -55,6 +55,9 @@ export default {
 
     async function markRead(n) {
       if (n.read) return;
+      // Optimistic update — flip locally first, then PATCH. Roll back on
+      // failure so the UI doesn't claim "read" while the server has it
+      // unread (the badge would also drift out of sync).
       n.read = true;
       state.unread = Math.max(0, state.unread - 1);
       render();
@@ -64,6 +67,9 @@ export default {
         // for the 60s shell poll to catch up.
         ctx.pokeBadge?.();
       } catch (e) {
+        n.read = false;
+        state.unread = state.unread + 1;
+        render();
         ctx.toast(e.message, 'danger');
       }
     }
@@ -96,21 +102,25 @@ export default {
     function render() {
       root.innerHTML = '';
       const wrap = document.createElement('div');
+      // Header is always rendered when not in initial-load spinner state,
+      // so the user can manually refresh from any state (empty, error,
+      // or populated). Empty state previously hid the refresh button and
+      // left the user stuck waiting for the 30s auto-poll.
+      const header = `
+        <div class="row" style="align-items:center;margin:0 4px 8px">
+          <div class="grow muted small">${state.unread} unread of ${state.items.length}</div>
+          <button class="btn secondary" data-refresh ${state.busy ? 'disabled' : ''}>Refresh</button>
+          <button class="btn secondary" data-mark-all style="margin-left:6px" ${state.busy || state.unread === 0 ? 'disabled' : ''}>Mark all read</button>
+        </div>
+      `;
       if (state.loading) {
         wrap.innerHTML = `<div class="empty"><div class="spinner" style="margin:0 auto"></div></div>`;
       } else if (state.error) {
-        wrap.innerHTML = `<div class="empty"><div class="ico">⚠️</div><div>${esc(state.error)}</div></div>`;
+        wrap.innerHTML = header + `<div class="empty"><div class="ico">⚠️</div><div>${esc(state.error)}</div></div>`;
       } else if (!state.items.length) {
-        wrap.innerHTML = `<div class="empty"><div class="ico">🔔</div><div>No notifications</div></div>`;
+        wrap.innerHTML = header + `<div class="empty"><div class="ico">🔔</div><div>No notifications</div></div>`;
       } else {
-        wrap.innerHTML = `
-          <div class="row" style="align-items:center;margin:0 4px 8px">
-            <div class="grow muted small">${state.unread} unread of ${state.items.length}</div>
-            <button class="btn secondary" data-refresh ${state.busy ? 'disabled' : ''}>Refresh</button>
-            <button class="btn secondary" data-mark-all style="margin-left:6px" ${state.busy || state.unread === 0 ? 'disabled' : ''}>Mark all read</button>
-          </div>
-          <div class="list" data-list></div>
-        `;
+        wrap.innerHTML = header + `<div class="list" data-list></div>`;
         const list = wrap.querySelector('[data-list]');
         for (const n of state.items) list.appendChild(notifCard(n));
       }
