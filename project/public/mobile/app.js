@@ -154,9 +154,11 @@ async function render() {
   }
   if (hash === 'login') return renderLogin();
   if (hash === 'no-features') return renderNoFeatures();
-  // Forced reset on first login — block all profile routes until the
-  // user picks a new password. Server clears the flag on success.
-  if (session.user?.must_change_password || hash === 'force-change-password') {
+  // Forced reset is a LOGIN-TIME trigger only (per Pat). The login
+  // handler navigates here when the response carries the flag; we
+  // render the page on demand but do NOT re-enforce on subsequent
+  // navigations.
+  if (hash === 'force-change-password') {
     return renderForceChangePassword();
   }
 
@@ -268,6 +270,15 @@ function renderLogin() {
     err.textContent = '';
     try {
       await login(wrap.querySelector('#email').value.trim(), wrap.querySelector('#pass').value);
+      // First-login forced reset: if the login response carried the
+      // flag, route to the forced screen instead of any profile tab.
+      // Login-time only (per Pat) — no render guard re-enforces later,
+      // so this branch is the sole trigger on mobile.
+      if (session.user?.must_change_password) {
+        location.hash = '#force-change-password';
+        render();
+        return;
+      }
       // Pre-fetch unread count BEFORE mutating location.hash. routeToDefault
       // fires hashchange which triggers an async render() — without this
       // ordering, that render would race ahead with stale badgeState.unread

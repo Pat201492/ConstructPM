@@ -106,6 +106,19 @@ export async function showScanner({ title = 'Scan barcode', onLookup } = {}) {
       const caps = videoTrack?.getCapabilities?.();
       if (caps && caps.torch) {
         torchBtn.hidden = false;
+        // Auto-enable on scanner open — barcode tags in warehouses /
+        // job-site lockers are usually in poor light. User can still
+        // toggle off if they don't want it. cleanup() also turns it off
+        // on cancel / success so the LED doesn't stay lit afterward.
+        try {
+          await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+          torchOn = true;
+          torchBtn.textContent = '💡 Off';
+        } catch {
+          // Capability said yes but apply failed — leave torch off,
+          // button stays available for manual retry.
+          torchOn = false;
+        }
         torchBtn.onclick = async () => {
           torchOn = !torchOn;
           try {

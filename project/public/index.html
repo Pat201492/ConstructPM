@@ -994,11 +994,11 @@ async function render() {
   root.innerHTML='';
   if(S.page==='login') return renderLogin(root);
   if(!S.token) return navigate('login');
-  // Forced reset on first login — no sidebar / no dev bar so the user
-  // can't skip past it. Cleared the moment the change-password POST
-  // succeeds; subsequent /auth/me responses carry the flag too so a
-  // refresh mid-session can't bypass it.
-  if (S.page === 'force-change-password' || (S.user && S.user.must_change_password)) {
+  // Forced reset is a LOGIN-TIME trigger only (per Pat). The login()
+  // handler navigates to this page when the response carries the flag;
+  // we render the page on demand but do NOT re-enforce on subsequent
+  // navigations. A user mid-session is free to keep using the app.
+  if (S.page === 'force-change-password') {
     return renderForceChangePassword(root);
   }
 
