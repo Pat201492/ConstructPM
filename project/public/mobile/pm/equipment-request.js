@@ -10,6 +10,7 @@ import { api } from '../lib/api.js';
 import { pickerHtml, bindPicker } from '../lib/pickers.js';
 
 const projectLabel = (p) => p.primary_number || p.name || p.id;
+const EQ_FIELDS = ['equipment_type', 'equipment_subtype', 'equipment_name', 'manufacturer'];
 
 export default {
   async mount(root, ctx) {
@@ -107,19 +108,20 @@ export default {
           const f = el.dataset.lineField;
           if (f === 'quantity') {
             state.lines[i][f] = parseInt(el.value, 10) || 1;
-          } else {
-            state.lines[i][f] = el.value;
+            return;
           }
+          state.lines[i][f] = el.value;
           // Bidirectional auto-fill: if the four equipment fields narrow
           // to exactly one item in the options pool, fill the unset ones.
-          const fields = ['equipment_type', 'equipment_subtype', 'equipment_name', 'manufacturer'];
-          const items = (state.eqOptions.items || []).filter(it =>
-            fields.every(k => !state.lines[i][k] || it[k] === state.lines[i][k])
-          );
+          const items = matchingItems(state.lines[i]);
           if (items.length === 1) {
-            fields.forEach(k => { if (!state.lines[i][k] && items[0][k]) state.lines[i][k] = items[0][k]; });
-            render();
+            EQ_FIELDS.forEach(k => { if (!state.lines[i][k] && items[0][k]) state.lines[i][k] = items[0][k]; });
           }
+          // Re-render so the OTHER fields' datalists narrow to whatever is
+          // still consistent with the just-set field. Without this each
+          // datalist would keep showing every known value globally and the
+          // PM would see Saw subtypes after picking type=Drill.
+          render();
         };
       });
       wrap.querySelectorAll('[data-remove-line]').forEach(b => {
@@ -136,8 +138,36 @@ export default {
       wrap.querySelector('[data-action="submit"]').onclick = submit;
     }
 
+    // Items consistent with whatever is already set on this line. Empty
+    // fields are wildcards. Used by renderLine to cascade the datalists
+    // and by the onchange autofill to detect a single-match narrow.
+    function matchingItems(ln) {
+      const items = state.eqOptions.items || [];
+      return items.filter(it => EQ_FIELDS.every(k => !ln[k] || it[k] === ln[k]));
+    }
+
+    // Per-field uniqs from the matching subset — what the user can pick
+    // for this field that won't contradict their other picks. Excluding
+    // the field's own current value from the pool would make the user's
+    // current selection vanish from the dropdown after typing, so we
+    // re-include the full unique set for that field's own column.
+    function filteredOpts(ln) {
+      const items = matchingItems(ln);
+      const pull = (k) => [...new Set(items.map(i => i[k]).filter(Boolean))].sort();
+      return {
+        types: pull('equipment_type'),
+        subtypes: pull('equipment_subtype'),
+        names: pull('equipment_name'),
+        manufacturers: pull('manufacturer'),
+      };
+    }
+
     function renderLine(ln, i) {
-      // Datalist IDs unique per line.
+      // Datalist IDs unique per line. Options pulled from filteredOpts(ln)
+      // so picking Type=Drill collapses subtype/name/manufacturer to only
+      // drills; picking Manufacturer=DeWalt collapses everything to DeWalt
+      // tools. Bidirectional — works from any field.
+      const fo = filteredOpts(ln);
       return `
         <div class="card">
           <div class="row">
@@ -146,23 +176,23 @@ export default {
           </div>
           <div style="margin-top:8px">
             <label>Type</label>
-            <input data-line="${i}" data-line-field="equipment_type" list="dl-type-${i}" value="${esc(ln.equipment_type)}" />
-            <datalist id="dl-type-${i}">${optList(uniq((state.eqOptions.items || []).map(x => x.equipment_type)))}</datalist>
+            <input data-line="${i}" data-line-field="equipment_type" list="dl-type-${i}" value="${esc(ln.equipment_type)}" placeholder="Type to filter…" />
+            <datalist id="dl-type-${i}">${optList(fo.types)}</datalist>
           </div>
           <div style="margin-top:8px">
             <label>Subtype</label>
-            <input data-line="${i}" data-line-field="equipment_subtype" list="dl-sub-${i}" value="${esc(ln.equipment_subtype)}" />
-            <datalist id="dl-sub-${i}">${optList(uniq((state.eqOptions.items || []).map(x => x.equipment_subtype)))}</datalist>
+            <input data-line="${i}" data-line-field="equipment_subtype" list="dl-sub-${i}" value="${esc(ln.equipment_subtype)}" placeholder="Type to filter…" />
+            <datalist id="dl-sub-${i}">${optList(fo.subtypes)}</datalist>
           </div>
           <div style="margin-top:8px">
             <label>Name</label>
-            <input data-line="${i}" data-line-field="equipment_name" list="dl-name-${i}" value="${esc(ln.equipment_name)}" />
-            <datalist id="dl-name-${i}">${optList(uniq((state.eqOptions.items || []).map(x => x.equipment_name)))}</datalist>
+            <input data-line="${i}" data-line-field="equipment_name" list="dl-name-${i}" value="${esc(ln.equipment_name)}" placeholder="Type to filter…" />
+            <datalist id="dl-name-${i}">${optList(fo.names)}</datalist>
           </div>
           <div style="margin-top:8px">
             <label>Manufacturer</label>
-            <input data-line="${i}" data-line-field="manufacturer" list="dl-mfr-${i}" value="${esc(ln.manufacturer)}" />
-            <datalist id="dl-mfr-${i}">${optList(uniq((state.eqOptions.items || []).map(x => x.manufacturer)))}</datalist>
+            <input data-line="${i}" data-line-field="manufacturer" list="dl-mfr-${i}" value="${esc(ln.manufacturer)}" placeholder="Type to filter…" />
+            <datalist id="dl-mfr-${i}">${optList(fo.manufacturers)}</datalist>
           </div>
         </div>
       `;
