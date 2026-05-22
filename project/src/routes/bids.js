@@ -893,6 +893,26 @@ router.patch('/:id', authorize('bids:update'), async (req, res, next) => {
       }
     }
 
+    // Mirror POST /bids site-contact denormalization (lines 177-186) on
+    // PATCH so a later /quick-project carries the correct site_contact
+    // name + phone onto the project. Resolves on any explicit change to
+    // either site_contact_id or customer_contact_id (which is the fallback
+    // for site contact, same as bid create).
+    if (data.site_contact_id !== undefined || data.customer_contact_id !== undefined) {
+      const existing = await db('bids').where('id', req.params.id).first('site_contact_id', 'customer_contact_id');
+      const effectiveSiteId = (data.site_contact_id !== undefined ? data.site_contact_id : existing?.site_contact_id)
+        || (data.customer_contact_id !== undefined ? data.customer_contact_id : existing?.customer_contact_id)
+        || null;
+      if (effectiveSiteId) {
+        const sc = await db('contacts').where('id', effectiveSiteId).first();
+        data.site_contact_name = sc ? sc.name : null;
+        data.site_contact_phone = sc ? (sc.phone || null) : null;
+      } else {
+        data.site_contact_name = null;
+        data.site_contact_phone = null;
+      }
+    }
+
     // Auto-stamp submit_date when the status transition is the act of
     // submitting. Only fires if (a) status is being set to 'submitted',
     // (b) submit_date wasn't explicitly supplied in this PATCH, and

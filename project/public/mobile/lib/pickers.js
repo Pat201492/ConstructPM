@@ -42,13 +42,20 @@ export function pickerHtml({ id, label, selectedDisplay = '', placeholder = 'Typ
 }
 
 // Wires the input + dropdown. `onPick` is called with (pickedId, pickedItem)
-// when the user selects one. `onClear` is called when the user types and
-// invalidates the previous selection. If `onClear` is omitted, onPick is
-// called with ('', null) on clear.
-export function bindPicker(root, { id, items, labelFn, onPick, onClear }) {
+// when the user picks an item (click / tap / Enter). Typing in the input
+// is treated as SEARCH ONLY — it does NOT clear or change the bound state.
+// If the user types and clicks away without picking, the visible text
+// reverts to the last committed display so the input never drifts out of
+// sync with the underlying selection.
+export function bindPicker(root, { id, items, labelFn, onPick }) {
   const input = root.querySelector(`[data-picker="${cssEscape(id)}"]`);
   const list = root.querySelector(`[data-picker-list="${cssEscape(id)}"]`);
   if (!input || !list) return;
+
+  // Snapshot at bind time. pickerHtml sets input.value to the currently
+  // selected item's label (or ''), so this is the source of truth for
+  // what the visible text should be when the user isn't actively typing.
+  let committedDisplay = input.value;
 
   const renderList = (filter) => {
     const f = (filter || '').toLowerCase().trim();
@@ -70,20 +77,21 @@ export function bindPicker(root, { id, items, labelFn, onPick, onClear }) {
 
   const pick = (pickedId) => {
     const item = items.find(i => i.id === pickedId) || null;
-    input.value = item ? labelFn(item) : '';
+    committedDisplay = item ? labelFn(item) : '';
+    input.value = committedDisplay;
     list.style.display = 'none';
     onPick?.(pickedId || '', item);
   };
 
   input.onfocus = () => renderList(input.value);
-  input.oninput = () => {
-    renderList(input.value);
-    // Typing without picking invalidates the prior selection — otherwise
-    // a stale id stays in state while the visible text says something else.
-    if (onClear) onClear();
-    else onPick?.('', null);
-  };
-  input.onblur = () => setTimeout(() => { list.style.display = 'none'; }, 180);
+  input.oninput = () => renderList(input.value);
+  input.onblur = () => setTimeout(() => {
+    list.style.display = 'none';
+    // Revert visible text to the committed selection if the user typed
+    // but didn't pick — otherwise the next render() would still show
+    // stale text and they'd see two different "current values" at once.
+    if (input.value !== committedDisplay) input.value = committedDisplay;
+  }, 180);
 }
 
 // Minimal CSS.escape polyfill for old browsers — used to safely embed an
