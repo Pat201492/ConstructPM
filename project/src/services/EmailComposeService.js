@@ -92,6 +92,23 @@ async function emailDayLookups(ids) {
 
 function emailDayVarsFromLookups(L, date) {
   const primary = (L.all_numbers || []).find(pn => pn.label === 'Primary');
+
+  // Pick the best address string we have for the map link, in priority
+  // order: location.display_address, location.address (raw), project.address.
+  // The map_url is opaque-to-the-template (URL only) and map_link is a
+  // pre-built anchor tag so templates can drop it in with triple-braces
+  // without composing the URL themselves.
+  const rawAddress = L.location?.display_address || L.location?.address || L.project.address || '';
+  const mapUrl = rawAddress
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(rawAddress)}`
+    : '';
+  const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Universal Google-Maps deep-link — works on Android Maps, iOS Maps
+  // (Apple Maps auto-redirects), and desktop browsers.
+  const mapLink = rawAddress
+    ? `<a href="${escHtml(mapUrl)}">${escHtml(rawAddress)}</a>`
+    : '';
+
   const vars = {
     'project.name': L.project.name || '',
     'project.year': L.project.year || '',
@@ -109,6 +126,8 @@ function emailDayVarsFromLookups(L, date) {
     'location.name': L.location?.name || '',
     'location.display_address': L.location?.display_address || '',
     'location.local_union': L.location?.local_union || '',
+    'location.map_url': mapUrl,
+    'location.map_link': mapLink,
     'customer_contact.name': L.customer_contact?.name || '',
     'customer_contact.email': L.customer_contact?.email || '',
     'customer_contact.phone': L.customer_contact?.phone || '',
@@ -179,6 +198,8 @@ async function getEmailDayCatalog(ids) {
 
     cv('location.name', 'Location: Name', vars['location.name']),
     cv('location.display_address', 'Location: Address', vars['location.display_address']),
+    cv('location.map_link', 'Location: Address (Maps link)', vars['location.map_link']),
+    cv('location.map_url', 'Location: Maps URL', vars['location.map_url']),
     cv('location.local_union', 'Location: Local Union', vars['location.local_union']),
 
     cv('date', 'Date', vars.date),
@@ -285,14 +306,23 @@ function cv(key, label, sample, extra = {}) {
   return { key, label, sample: sample == null ? '' : String(sample), emailable: !!extra.emailable };
 }
 
+// Single-pass alternation — triple-brace OR double-brace in one
+// regex so a triple-brace value containing `{{x}}` does NOT get
+// re-substituted by a second pass. Mirrors EmailTemplateService's
+// MUSTACHE_RE (extended here to permit dotted keys like
+// `location.map_link`, which the bid-template engine doesn't expose).
+const TOKEN_RE = /\{\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}\}|\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}/g;
+
 function substitute(rawString, vars, opts = {}) {
   if (typeof rawString !== 'string' || rawString.length === 0) return '';
   const escape = opts.escape !== false; // default: escape (body)
-  return rawString.replace(/\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}/g, (_m, key) => {
+  return rawString.replace(TOKEN_RE, (_m, rawKey, escKey) => {
+    const key = rawKey || escKey;
+    const isRaw = !!rawKey;
     const v = vars[key];
     if (v === undefined || v === null) return '';
     const s = String(v);
-    return escape ? escapeHtml(s) : s;
+    return (isRaw || !escape) ? s : escapeHtml(s);
   });
 }
 
