@@ -22,6 +22,52 @@ const ExportService = {
     return [headers.map(escape).join(','), ...rows.map(row => row.map(escape).join(','))].join('\n');
   },
 
+  // ── XLSX UTILITY ─────────────────────────────────────────────
+  // Minimal-but-decent Excel builder used by the builder/download
+  // route and SavedExportRunner. One sheet, bold + frozen header row,
+  // column widths sized to content (capped at 60). Numeric / date-looking
+  // strings are typed so Excel sorts + formats them correctly; everything
+  // else stays a string.
+  //
+  // sheetName is sanitized to ExcelJS's 31-char limit with the reserved
+  // characters stripped — the workbook throws if violated.
+  async toXLSX(headers, rows, sheetName) {
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'ConstructPM';
+    wb.created = new Date();
+    const cleanName = sanitizeSheetName(sheetName);
+    const sheet = wb.addWorksheet(cleanName || 'Export');
+
+    sheet.columns = headers.map((label) => ({
+      header: String(label ?? ''),
+      key: String(label ?? ''),
+      width: 12,
+    }));
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    for (const row of rows) {
+      sheet.addRow(headers.map((_h, i) => coerceCell(row[i])));
+    }
+
+    // Auto-fit: walk each column, pick the widest cell content (including
+    // header), pad by 2, cap at 60. Cheap O(rows*cols) — fine for the
+    // hundreds-to-low-thousands rows the export builder produces.
+    sheet.columns.forEach((col, idx) => {
+      let max = String(headers[idx] ?? '').length;
+      for (const row of rows) {
+        const v = row[idx];
+        const len = v == null ? 0 : String(v).length;
+        if (len > max) max = len;
+      }
+      col.width = Math.min(60, Math.max(8, max + 2));
+    });
+
+    return wb.xlsx.writeBuffer();
+  },
+
   _fmtDate(v) { if (!v) return ''; const d = new Date(v); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; },
   _fmtAmt(v) { return v != null ? parseFloat(v).toFixed(2) : '0.00'; },
   _fmtHrs(v) { return v != null ? parseFloat(v).toFixed(2) : '0.00'; },
@@ -384,5 +430,37 @@ const ExportService = {
   },
 
 };
+
+// Coerce a value into the type Excel renders best. Numeric strings stay
+// numeric; ISO-date / yyyy-mm-dd strings become Date so Excel sorts +
+// formats them. Everything else passes through unchanged.
+function coerceCell(v) {
+  if (v == null) return '';
+  if (typeof v === 'number') return v;
+  if (v instanceof Date) return v;
+  if (typeof v === 'string') {
+    // Trimmed numeric — non-empty, valid Number(), no leading zeros that
+    // would imply an ID (project numbers, barcodes). The leading-zero
+    // guard prevents turning "001234" into the number 1234.
+    if (/^-?\d+(\.\d+)?$/.test(v) && !/^0\d/.test(v)) {
+      const n = Number(v);
+      if (!Number.isNaN(n) && Number.isFinite(n)) return n;
+    }
+    // ISO date (yyyy-mm-dd) or ISO datetime — Excel handles either when
+    // typed as Date. Avoid Date() parse for ambiguous strings to dodge
+    // the "Trenton, NJ" → Invalid Date branch quietly returning NaN.
+    if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(v)) {
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+  }
+  return v;
+}
+
+// ExcelJS rejects \ / ? * [ ] : and caps sheet names at 31 chars.
+function sanitizeSheetName(name) {
+  if (!name) return '';
+  return String(name).replace(/[\\\/?*\[\]:]/g, '_').slice(0, 31);
+}
 
 module.exports = ExportService;

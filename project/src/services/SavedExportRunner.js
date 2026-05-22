@@ -53,7 +53,10 @@ const SavedExportRunner = {
     let errorMsg = null;
     const deliveryErrors = [];
     let delivered = 0, failed = 0, skipped = 0, rowCount = 0;
-    let tmpPath = null;
+    // tmpPaths is an array now — one entry per requested format. The
+    // finally block walks all of them on cleanup so a partial failure
+    // doesn't leak any of them.
+    const tmpPaths = [];
 
     try {
       // Stamp 'running' upfront so retries after a crash mid-send don't
@@ -64,7 +67,7 @@ const SavedExportRunner = {
       // staying on the previous status until the end.
       await this._stamp(savedExport.id, 'running', null);
 
-      // 1+2. Run the export and build CSV
+      // 1+2. Run the export
       const columns = normalizeJsonArray(savedExport.columns);
       const filters = normalizeJsonObject(savedExport.filters);
       const result = await ExportBuilder.execute(savedExport.source, columns, filters);
@@ -76,14 +79,30 @@ const SavedExportRunner = {
         return { delivered: 0, failed: 0, skipped: 0, rowCount: 0, status };
       }
 
-      const csv = ExportService.toCSV(result.headers, result.rows);
+      // 3. Build one attachment per requested format. Defaults to CSV when
+      // export_formats is missing/empty (matches the validator default).
+      // pdf is rejected with a clear error in PR #45 (added in #46).
+      const formats = pickFormats(savedExport.export_formats);
+      const attachments = [];
+      for (const fmt of formats) {
+        const built = await this._buildAttachment(
+          fmt,
+          result.headers,
+          result.rows,
+          savedExport.source,
+          savedExport.name,
+          savedExport.id,
+        );
+        attachments.push(built);
+        tmpPaths.push(built.filePath);
+      }
 
-      // 3. Temp file
-      tmpPath = path.join(os.tmpdir(), `saved-export-${savedExport.id}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.csv`);
-      await fs.writeFile(tmpPath, csv, 'utf8');
-
-      const filename = `${slug(savedExport.name)}_${ymd()}.csv`;
       const whenUtc = new Date().toISOString().replace('T', ' ').replace(/\..*$/, '');
+      // Tag the subject with " (CSV)" / " (XLSX)" / etc. when ≥ 2 formats
+      // are being sent so siblings are distinguishable. Single-format runs
+      // keep the subject clean.
+      const tagFormat = attachments.length > 1;
+      const tagSubject = (base, fmt) => tagFormat ? `${base} (${fmt.toUpperCase()})` : base;
 
       const composed = !!(overrides.override_subject || overrides.override_body_html
         || (Array.isArray(overrides.override_to) && overrides.override_to.length > 0)
@@ -91,13 +110,9 @@ const SavedExportRunner = {
 
       if (composed) {
         // Compose path: resolve user-edited subject/body against live data
-        // + send ONE bulk email (To: override_to OR saved recipients;
-        // CC: extra_cc). No per-recipient fan-out — the user explicitly
-        // composed a single message for a chosen audience. When the
-        // compose modal didn't override subject/body, fall back to the
-        // saved export's own `email_subject` / `email_body_html` (the
-        // admin-edited per-export config) — NOT the global template,
-        // which PR 19 took out of the runner's read path.
+        // + send ONE bulk email per format (To: override_to OR saved
+        // recipients; CC: extra_cc). No per-recipient fan-out — the user
+        // explicitly composed a single message for a chosen audience.
         const composeVars = await EmailComposeService.getVars(
           'saved_export_run',
           { saved_export_id: savedExport.id },
@@ -105,7 +120,7 @@ const SavedExportRunner = {
         );
         const baseSubject = savedExport.email_subject || `[ConstructPM] {{name}}`;
         const baseHtml = savedExport.email_body_html
-          || `<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>`;
+          || `<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the attached file is included.</p>`;
         const subject = overrides.override_subject
           ? EmailComposeService.resolveWithVars(overrides.override_subject, composeVars, { escape: false })
           : EmailComposeService.resolveWithVars(baseSubject, composeVars, { escape: false });
@@ -135,23 +150,25 @@ const SavedExportRunner = {
           return { delivered: 0, failed: 0, skipped, rowCount, status };
         }
 
-        const res = await NotificationService.sendEmailWithAttachment({
-          to: toList,
-          cc: ccList.length > 0 ? ccList : undefined,
-          subject,
-          html,
-          filePath: tmpPath,
-          filename,
-          contentType: 'text/csv',
-        });
-        if (res && res.delivered) {
-          delivered = toList.length;
-        } else {
-          failed = toList.length;
-          if (res && res.reason) deliveryErrors.push(res.reason);
+        for (const att of attachments) {
+          const res = await NotificationService.sendEmailWithAttachment({
+            to: toList,
+            cc: ccList.length > 0 ? ccList : undefined,
+            subject: tagSubject(subject, att.fmt),
+            html,
+            filePath: att.filePath,
+            filename: att.filename,
+            contentType: att.contentType,
+          });
+          if (res && res.delivered) {
+            delivered += toList.length;
+          } else {
+            failed += toList.length;
+            if (res && res.reason) deliveryErrors.push(res.reason);
+          }
         }
       } else {
-        // ── Default (template-driven) path: per-recipient fan-out ────
+        // ── Default (template-driven) path: per-recipient × per-format ──
         const recipientIds = normalizeJsonArray(savedExport.recipients);
         const recipients = recipientIds.length === 0 ? [] : await db('users')
           .whereIn('id', recipientIds)
@@ -168,12 +185,12 @@ const SavedExportRunner = {
         // into any existing rows that hadn't customised them yet.
         // renderRaw shares the same mustache + escape rules as the
         // template render() path. Rendered once; reused for every
-        // recipient.
+        // recipient × format combination.
         const rendered = EmailTemplateService.renderRaw(
           {
             subject: savedExport.email_subject || `[ConstructPM] {{name}}`,
             body_html: savedExport.email_body_html
-              || `<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>`,
+              || `<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the attached file is included.</p>`,
             body_text: savedExport.email_body_text || null,
           },
           { name: savedExport.name, source: savedExport.source, rowCount, whenUtc },
@@ -183,27 +200,33 @@ const SavedExportRunner = {
 
         for (const r of recipients) {
           if (!r.email) {
-            failed++;
+            // A no-email recipient blocks every format we would have
+            // sent to them — increment by attachments.length so the
+            // counter stays in "send attempts" units (matches the
+            // composed path which adds toList.length per attachment).
+            failed += attachments.length;
             deliveryErrors.push(`${r.id}: no email on file`);
             continue;
           }
-          try {
-            const res = await NotificationService.sendEmailWithAttachment({
-              to: r.email,
-              subject,
-              html,
-              filePath: tmpPath,
-              filename,
-              contentType: 'text/csv',
-            });
-            if (res && res.delivered) delivered++;
-            else {
+          for (const att of attachments) {
+            try {
+              const res = await NotificationService.sendEmailWithAttachment({
+                to: r.email,
+                subject: tagSubject(subject, att.fmt),
+                html,
+                filePath: att.filePath,
+                filename: att.filename,
+                contentType: att.contentType,
+              });
+              if (res && res.delivered) delivered++;
+              else {
+                failed++;
+                if (res && res.reason) deliveryErrors.push(`${r.email}: ${res.reason}`);
+              }
+            } catch (err) {
               failed++;
-              if (res && res.reason) deliveryErrors.push(`${r.email}: ${res.reason}`);
+              deliveryErrors.push(`${r.email}: ${err.message}`);
             }
-          } catch (err) {
-            failed++;
-            deliveryErrors.push(`${r.email}: ${err.message}`);
           }
         }
       }
@@ -235,11 +258,47 @@ const SavedExportRunner = {
       await this._stamp(savedExport.id, 'failed', errorMsg);
       return { delivered, failed, skipped, rowCount, status: 'failed', error: errorMsg };
     } finally {
-      // 6. Cleanup
-      if (tmpPath) {
-        fs.unlink(tmpPath).catch(() => {});
+      // 6. Cleanup — every temp file written by _buildAttachment, regardless
+      // of whether the send loop got that far. Silent unlink errors so a
+      // missing path (cleanup ran twice, OS already swept it) doesn't
+      // turn the finally block into the surfaced error.
+      for (const p of tmpPaths) {
+        fs.unlink(p).catch(() => {});
       }
     }
+  },
+
+  /**
+   * Build one format attachment: encodes the rows, writes a temp file,
+   * returns { fmt, filePath, filename, contentType } ready for
+   * sendEmailWithAttachment. The caller owns cleanup via the returned
+   * filePath.
+   */
+  async _buildAttachment(fmt, headers, rows, source, exportName, savedExportId) {
+    const stem = `${slug(exportName)}_${ymd()}`;
+    const tmpStem = path.join(
+      os.tmpdir(),
+      `saved-export-${savedExportId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+    );
+    if (fmt === 'csv') {
+      const csv = ExportService.toCSV(headers, rows);
+      const filePath = `${tmpStem}.csv`;
+      await fs.writeFile(filePath, csv, 'utf8');
+      return { fmt, filePath, filename: `${stem}.csv`, contentType: 'text/csv' };
+    }
+    if (fmt === 'xlsx') {
+      const buf = await ExportService.toXLSX(headers, rows, source);
+      const filePath = `${tmpStem}.xlsx`;
+      await fs.writeFile(filePath, Buffer.from(buf));
+      return {
+        fmt,
+        filePath,
+        filename: `${stem}.xlsx`,
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
+    }
+    // pdf intentionally not implemented in PR #45 — added in PR #46.
+    throw new Error(`Unsupported export format: ${fmt}`);
   },
 
   async _stamp(id, status, error) {
@@ -251,6 +310,21 @@ const SavedExportRunner = {
     });
   },
 };
+
+// Normalize saved_exports.export_formats into a clean list. Defaults to
+// ['csv'] if the field is absent/empty so legacy rows keep working
+// unchanged. Dedupes + strips unknown formats so an outdated row with
+// 'json' (or whatever) doesn't blow up the runner.
+function pickFormats(raw) {
+  const list = normalizeJsonArray(raw);
+  const allowed = ['csv', 'xlsx', 'pdf'];
+  const out = [];
+  for (const f of list) {
+    const norm = String(f || '').toLowerCase();
+    if (allowed.includes(norm) && !out.includes(norm)) out.push(norm);
+  }
+  return out.length > 0 ? out : ['csv'];
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────
 

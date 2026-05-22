@@ -116,14 +116,29 @@ router.post('/builder/preview', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/exports/builder/download — full CSV download
+// POST /api/exports/builder/download?format=csv|xlsx — full download
+// CSV is the default; xlsx returns a binary Buffer with the same headers
+// + rows that the CSV path serves. Both share the ExportBuilder result,
+// only the encoder differs.
 router.post('/builder/download', async (req, res, next) => {
   try {
     const { source, columns, filters } = req.body;
     if (!source) return res.status(400).json({ error: 'source required' });
+    const format = String(req.query.format || 'csv').toLowerCase();
+    if (!['csv', 'xlsx'].includes(format)) {
+      return res.status(400).json({ error: `unsupported format "${format}"` });
+    }
     const result = await ExportBuilder.execute(source, columns, filters || {});
+    const dateStr = new Date().toISOString().split('T')[0];
+    if (format === 'xlsx') {
+      const buf = await ExportService.toXLSX(result.headers, result.rows, source);
+      const filename = `${source}_export_${dateStr}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(Buffer.from(buf));
+    }
     const csv = ExportService.toCSV(result.headers, result.rows);
-    sendCSV(res, csv, `${source}_export_${new Date().toISOString().split('T')[0]}.csv`);
+    sendCSV(res, csv, `${source}_export_${dateStr}.csv`);
   } catch (err) { next(err); }
 });
 
