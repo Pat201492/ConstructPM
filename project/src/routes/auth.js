@@ -266,6 +266,49 @@ router.post(
 );
 
 /**
+ * POST /api/auth/initial-password-change
+ * First-login password set. Skips currentPassword check because the
+ * user just authenticated with the admin-set default (ChangeMe123!) at
+ * the login step that immediately preceded this call — re-asking for
+ * it is friction without security benefit.
+ *
+ * Only valid when the caller still has must_change_password = true.
+ * After must_change_password flips false, this endpoint 403s so it
+ * can't be used as a password-change shortcut later in the session.
+ * Body: { newPassword }
+ */
+router.post(
+  '/initial-password-change',
+  authenticate,
+  [body('newPassword').isLength({ min: 8 }).withMessage('New password must be at least 8 characters')],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: 'Validation error', details: errors.array() });
+      }
+
+      const userRow = await db('users').where({ id: req.user.id }).first('id', 'active', 'must_change_password');
+      if (!userRow || !userRow.active) {
+        return res.status(404).json({ error: 'User not found or inactive' });
+      }
+      if (!userRow.must_change_password) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'This endpoint is only valid for the first-login flow. Use /auth/change-password to change a password mid-session.',
+        });
+      }
+
+      await User.update(req.user.id, { password: req.body.newPassword, must_change_password: false });
+
+      res.json({ message: 'Initial password set' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
  * POST /api/auth/reset-password/verify
  * Public — check whether a reset token is valid (used by the frontend
  * to decide whether to show the reset form or an "invalid link" error
