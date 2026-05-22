@@ -42,7 +42,10 @@ export default {
       ]);
       state.projects = proj.projects || proj || [];
       state.eqOptions = eq;
-      state.users = (usr.users || []).filter(u => u.active !== false);
+      // Strict active===true matches the server's `active: true` lookup
+      // — a soft `!== false` would include users with undefined/null
+      // active and the server would 400 them.
+      state.users = (usr.users || []).filter(u => u.active === true);
     } catch {}
 
     render();

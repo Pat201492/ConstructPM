@@ -4256,7 +4256,10 @@ async function etRequest(c){
   let users = [];
   try { users = (await api('/users')).users || []; } catch {}
   const userLabel = u => `${u.first_name || ''} ${u.last_name || ''}`.trim() + (u.email ? ` (${u.email})` : '');
-  const pickupDrop = searchDrop('etr-pickup', 'Pick Up Person', users.filter(u => u.active !== false), userLabel);
+  // Strict active===true matches the server's `active: true` lookup —
+  // a soft `!== false` here would let the picker show users whose
+  // active column is undefined/null and the server would 400 them.
+  const pickupDrop = searchDrop('etr-pickup', 'Pick Up Person', users.filter(u => u.active === true), userLabel);
 
   const requestor=h('input',{id:'etr-requestor',placeholder:'Requestor name',value:(S.user?`${S.user.firstName||S.user.first_name||''} ${S.user.lastName||S.user.last_name||''}`.trim():'')});
   const locName=h('input',{id:'etr-locname',placeholder:'Location name'});

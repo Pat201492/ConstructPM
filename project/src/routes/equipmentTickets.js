@@ -156,14 +156,20 @@ router.post('/', authorize('equipment:read'), async (req, res, next) => {
       }
     }
 
-    // If a pickup_person_id is given, denormalise the user's display
-    // name into the text column so the active-board card + PDF read
-    // it without an extra join. The text column also remains the
-    // fallback display if the FK is null (legacy / scripted callers).
+    // If a pickup_person_id is given, validate the user exists + is
+    // active BEFORE the insert — otherwise the FK constraint would
+    // 500 with a constraint-violation message rather than a clean 400.
+    // Denormalise their display name into the text column so the
+    // active-board card + PDF read it without an extra join. The text
+    // column remains the fallback display when the FK is null (legacy
+    // / scripted callers).
     let pickupName = b.pickup_person || null;
     if (b.pickup_person_id) {
       const u = await db('users').where({ id: b.pickup_person_id, active: true }).first('first_name', 'last_name');
-      if (u) pickupName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || pickupName;
+      if (!u) {
+        return res.status(400).json({ error: 'Selected pickup person does not exist or is inactive' });
+      }
+      pickupName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || pickupName;
     }
 
     const result = await db.transaction(async (trx) => {
