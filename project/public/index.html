@@ -4248,7 +4248,19 @@ async function etRequest(c){
   // contact/customer/location pickers.
   const projDrop = searchDrop('etr-project', 'Project', projects,
     p => (p.primary_number || p.name || p.id));
-  const pickup=h('input',{id:'etr-pickup',placeholder:'Pick up person'});
+
+  // Pickup-person picker — searchable user list. Carries the user's id
+  // via the hidden field so the server can ping their email when the
+  // ticket goes ready-for-pickup. Falls back to the matched display
+  // string for the denormalised pickup_person text column.
+  let users = [];
+  try { users = (await api('/users')).users || []; } catch {}
+  const userLabel = u => `${u.first_name || ''} ${u.last_name || ''}`.trim() + (u.email ? ` (${u.email})` : '');
+  // Strict active===true matches the server's `active: true` lookup —
+  // a soft `!== false` here would let the picker show users whose
+  // active column is undefined/null and the server would 400 them.
+  const pickupDrop = searchDrop('etr-pickup', 'Pick Up Person', users.filter(u => u.active === true), userLabel);
+
   const requestor=h('input',{id:'etr-requestor',placeholder:'Requestor name',value:(S.user?`${S.user.firstName||S.user.first_name||''} ${S.user.lastName||S.user.last_name||''}`.trim():'')});
   const locName=h('input',{id:'etr-locname',placeholder:'Location name'});
   const locAddr=h('input',{id:'etr-locaddr',placeholder:'Location address'});
@@ -4268,7 +4280,8 @@ async function etRequest(c){
   };
 
   grid.append(projDrop.group);
-  [['Pick Up Person',pickup],['Requestor',requestor],
+  grid.append(pickupDrop.group);
+  [['Requestor',requestor],
    ['Location Name',locName],['Location Address',locAddr],
    ['Site Contact Name',scName],['Site Contact Phone',scPhone]].forEach(([lab,el])=>{
     grid.append(h('div',{className:'form-group'},[h('label',{},lab),el]));
@@ -4381,7 +4394,11 @@ async function etRequest(c){
     try {
       const r=await api('/equipment-tickets',{method:'POST',body:JSON.stringify({
         project_id: projId,
-        pickup_person:$('#etr-pickup').value,
+        // pickup_person_id (hidden id from searchDrop). Server denormalises
+        // the display name into pickup_person so the active-board cards
+        // and pickup PDF read it without a join. Pickup user gets the
+        // ticket-ready email automatically.
+        pickup_person_id: $('#etr-pickup').value || null,
         requestor_name:$('#etr-requestor').value,
         location_name:$('#etr-locname').value,
         location_address:$('#etr-locaddr').value,

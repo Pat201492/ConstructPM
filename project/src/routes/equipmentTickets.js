@@ -110,10 +110,16 @@ router.get('/equipment-options', authorize('equipment:read'), async (req, res, n
 // TICKET CREATE  (web request form OR mobile)
 // ═══════════════════════════════════════════════════════════
 //
-// Body: { project_id?, project_number, pickup_person, requestor_name,
+// Body: { project_id?, project_number, pickup_person_id (uuid),
+//         pickup_person (free-text fallback / display), requestor_name,
 //         location_name, location_address, site_contact_name,
 //         site_contact_phone, lines: [{quantity, equipment_name,
 //         equipment_type, manufacturer}] }
+//
+// pickup_person_id is the FK to users.id — when set, the "Ready for
+// pickup" email goes to that user's inbox. The text column is kept as
+// a denormalised display copy (and a fallback for callers who don't
+// supply an id — e.g., scripted imports).
 router.post('/', authorize('equipment:read'), async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -150,6 +156,22 @@ router.post('/', authorize('equipment:read'), async (req, res, next) => {
       }
     }
 
+    // If a pickup_person_id is given, validate the user exists + is
+    // active BEFORE the insert — otherwise the FK constraint would
+    // 500 with a constraint-violation message rather than a clean 400.
+    // Denormalise their display name into the text column so the
+    // active-board card + PDF read it without an extra join. The text
+    // column remains the fallback display when the FK is null (legacy
+    // / scripted callers).
+    let pickupName = b.pickup_person || null;
+    if (b.pickup_person_id) {
+      const u = await db('users').where({ id: b.pickup_person_id, active: true }).first('first_name', 'last_name');
+      if (!u) {
+        return res.status(400).json({ error: 'Selected pickup person does not exist or is inactive' });
+      }
+      pickupName = `${u.first_name || ''} ${u.last_name || ''}`.trim() || pickupName;
+    }
+
     const result = await db.transaction(async (trx) => {
       const ticketNumber = await nextTicketNumber(trx);
 
@@ -157,7 +179,8 @@ router.post('/', authorize('equipment:read'), async (req, res, next) => {
         ticket_number: ticketNumber,
         project_id: b.project_id || null,
         project_number: projInfo.project_number,
-        pickup_person: b.pickup_person || null,
+        pickup_person_id: b.pickup_person_id || null,
+        pickup_person: pickupName,
         requestor_name: b.requestor_name || null,
         location_name: projInfo.location_name,
         location_address: projInfo.location_address,
@@ -485,7 +508,17 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
       .andWhere('u.active', true)
       .select('u.email')
       .first();
-    if (pmRow?.email) modularEmails = [pmRow.email];
+    if (pmRow?.email) modularEmails.push(pmRow.email);
+  }
+  // Loop the pickup person in by user FK (pickup_person_id) — the
+  // whole point of the request form's pickup-person picker is so the
+  // person physically grabbing the gear gets pinged when it's staged.
+  // De-dup against the PM email in case they're the same human.
+  if (project.pickup_person_id) {
+    const pu = await db('users')
+      .where({ id: project.pickup_person_id, active: true })
+      .first('email');
+    if (pu?.email && !modularEmails.includes(pu.email)) modularEmails.push(pu.email);
   }
 
   const createdByName = triggerUser

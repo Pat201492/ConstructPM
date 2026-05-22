@@ -10,16 +10,18 @@ import { api } from '../lib/api.js';
 import { pickerHtml, bindPicker } from '../lib/pickers.js';
 
 const projectLabel = (p) => p.primary_number || p.name || p.id;
+const userLabel = (u) => `${u.first_name || ''} ${u.last_name || ''}`.trim() + (u.email ? ` (${u.email})` : '');
 const EQ_FIELDS = ['equipment_type', 'equipment_name', 'manufacturer'];
 
 export default {
   async mount(root, ctx) {
     const state = {
       projects: [],
+      users: [],
       eqOptions: { items: [], types: [], names: [] },
       form: {
         project_id: '',
-        pickup_person: '',
+        pickup_person_id: '',
         requestor_name: defaultRequestorName(ctx.session),
         location_name: '',
         location_address: '',
@@ -33,12 +35,17 @@ export default {
     };
 
     try {
-      const [proj, eq] = await Promise.all([
+      const [proj, eq, usr] = await Promise.all([
         api('/projects?status=active&limit=500').catch(() => ({ projects: [] })),
         api('/equipment-tickets/equipment-options').catch(() => ({ items: [], types: [], names: [], manufacturers: [] })),
+        api('/users').catch(() => ({ users: [] })),
       ]);
       state.projects = proj.projects || proj || [];
       state.eqOptions = eq;
+      // Strict active===true matches the server's `active: true` lookup
+      // — a soft `!== false` would include users with undefined/null
+      // active and the server would 400 them.
+      state.users = (usr.users || []).filter(u => u.active === true);
     } catch {}
 
     render();
@@ -55,7 +62,12 @@ export default {
             selectedDisplay: (() => { const p = state.projects.find(x => x.id === state.form.project_id); return p ? projectLabel(p) : ''; })(),
             placeholder: 'Type to search your projects…',
           })}
-          <div style="margin-top:8px"><label>Pick up person</label><input data-field="pickup_person" value="${esc(state.form.pickup_person)}" /></div>
+          ${pickerHtml({
+            id: 'pickup_person_id',
+            label: 'Pick up person',
+            selectedDisplay: (() => { const u = state.users.find(x => x.id === state.form.pickup_person_id); return u ? userLabel(u) : ''; })(),
+            placeholder: 'Type to search users…',
+          })}
           <div style="margin-top:8px"><label>Requestor</label><input data-field="requestor_name" value="${esc(state.form.requestor_name)}" /></div>
           <div style="margin-top:8px"><label>Location name</label><input data-field="location_name" value="${esc(state.form.location_name)}" /></div>
           <div style="margin-top:8px"><label>Location address</label><input data-field="location_address" value="${esc(state.form.location_address)}" /></div>
@@ -99,6 +111,15 @@ export default {
           } catch {}
           render();
         },
+      });
+
+      // Pickup picker — user list. Pickup user's email gets the
+      // ticket-ready notification server-side; no UI hook needed here.
+      bindPicker(wrap, {
+        id: 'pickup_person_id',
+        items: state.users,
+        labelFn: userLabel,
+        onPick: (pickedId) => { state.form.pickup_person_id = pickedId; },
       });
 
       // Line field bindings
@@ -210,7 +231,9 @@ export default {
       try {
         const payload = {
           project_id: state.form.project_id,
-          pickup_person: state.form.pickup_person || null,
+          // Server denormalises the picked user's display name into
+          // pickup_person and emails their inbox on ready-for-pickup.
+          pickup_person_id: state.form.pickup_person_id || null,
           requestor_name: state.form.requestor_name || null,
           location_name: state.form.location_name || null,
           location_address: state.form.location_address || null,
@@ -227,7 +250,7 @@ export default {
         ctx.toast(`Ticket #${r.ticket_number || r.project?.ticket_number || ''} created`, 'ok');
         // Reset
         state.form = {
-          project_id: '', pickup_person: '',
+          project_id: '', pickup_person_id: '',
           requestor_name: defaultRequestorName(ctx.session),
           location_name: '', location_address: '',
           site_contact_name: '', site_contact_phone: '',
