@@ -154,9 +154,11 @@ async function render() {
   }
   if (hash === 'login') return renderLogin();
   if (hash === 'no-features') return renderNoFeatures();
-  // Forced reset on first login — block all profile routes until the
-  // user picks a new password. Server clears the flag on success.
-  if (session.user?.must_change_password || hash === 'force-change-password') {
+  // Forced reset is a LOGIN-TIME trigger only (per Pat). The login
+  // handler navigates here when the response carries the flag; we
+  // render the page on demand but do NOT re-enforce on subsequent
+  // navigations.
+  if (hash === 'force-change-password') {
     return renderForceChangePassword();
   }
 
