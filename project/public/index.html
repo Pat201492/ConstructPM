@@ -177,6 +177,23 @@ function $$(sel,ctx=document){return[...ctx.querySelectorAll(sel)]}
 function h(tag,attrs={},children=[]){const el=document.createElement(tag);Object.entries(attrs).forEach(([k,v])=>{if(k==='onclick'||k.startsWith('on'))el[k]=v;else if(k==='className')el.className=v;else if(k==='innerHTML')el.innerHTML=v;else el.setAttribute(k,v)});(Array.isArray(children)?children:[children]).forEach(c=>{if(c!=null)el.append(typeof c==='string'?document.createTextNode(c):c)});return el}
 function fmtD(v){return'$'+parseFloat(v||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
 
+// Non-blocking advisory toast. Single floating element appended to the
+// body's bottom-right corner; auto-dismisses after 8s. New calls replace
+// the active toast (no stacking) so a rapid burst of advisories doesn't
+// cover the screen.
+function showAdvisoryToast(msg, ms = 8000) {
+  const existing = document.getElementById('advisory-toast');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.id = 'advisory-toast';
+  el.style.cssText = 'position:fixed;bottom:20px;right:20px;max-width:420px;padding:12px 16px;background:#7a3a00;color:#fff;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.4);font-size:13px;line-height:1.4;z-index:9999;cursor:pointer';
+  el.textContent = msg;
+  el.title = 'Click to dismiss';
+  el.onclick = () => el.remove();
+  document.body.append(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, ms);
+}
+
 // ═══════════════════════════════════════════════════════════
 // SEARCHABLE DROPDOWN — type-to-filter picker for system-data fields
 // ═══════════════════════════════════════════════════════════
@@ -4549,6 +4566,7 @@ async function etRequest(c){
           lines[i][f] = parseInt(el.value) || 1;
           return;
         }
+        const prevName = lines[i].equipment_name;
         lines[i][f] = el.value;
         // After any equipment-field commit, look at all items matching
         // every filled field. If exactly one item is left, the user has
@@ -4559,6 +4577,22 @@ async function etRequest(c){
           fields.forEach(k => {
             if (!lines[i][k] && match[0][k]) lines[i][k] = match[0][k];
           });
+        }
+        // None-in-shop advisory (PR #51). Fires when equipment_name is
+        // set to a non-empty value that matches a known catalogue name
+        // (only — typo'd names wouldn't return any rows and we'd toast
+        // for every keystroke). Non-blocking: the form lets the user
+        // proceed and the ticket still creates.
+        const nameNow = lines[i].equipment_name;
+        if (nameNow && nameNow !== prevName && (opts.names || []).includes(nameNow)) {
+          api('/equipment/by-name-shop-status?name=' + encodeURIComponent(nameNow))
+            .then(r => {
+              if (r.in_shop === 0 && r.total > 0 && r.locations.length > 0) {
+                const locTxt = r.locations.map(l => l.project_number || l.project_name || '(unlabeled)').join(', ');
+                showAdvisoryToast(`None in shop. "${nameNow}" is currently located at: ${locTxt}`);
+              }
+            })
+            .catch(() => {}); // advisory only — never block the form
         }
         renderLines();
       };

@@ -131,12 +131,31 @@ export default {
             state.lines[i][f] = parseInt(el.value, 10) || 1;
             return;
           }
+          const prevName = state.lines[i].equipment_name;
           state.lines[i][f] = el.value;
           // Bidirectional auto-fill: if the four equipment fields narrow
           // to exactly one item in the options pool, fill the unset ones.
           const items = matchingItems(state.lines[i]);
           if (items.length === 1) {
             EQ_FIELDS.forEach(k => { if (!state.lines[i][k] && items[0][k]) state.lines[i][k] = items[0][k]; });
+          }
+          // None-in-shop advisory (PR #51). Mirrors the desktop ticket
+          // form: when the PM picks a name that maps to a known catalogue
+          // entry but every copy is currently out on a job, fire a toast.
+          // Non-blocking — the form still submits.
+          const nameNow = state.lines[i].equipment_name;
+          if (nameNow && nameNow !== prevName) {
+            const knownNames = new Set((state.opts.items || []).map(x => x.equipment_name).filter(Boolean));
+            if (knownNames.has(nameNow)) {
+              api('/equipment/by-name-shop-status?name=' + encodeURIComponent(nameNow))
+                .then(r => {
+                  if (r.in_shop === 0 && r.total > 0 && r.locations.length > 0) {
+                    const locTxt = r.locations.map(l => l.project_number || l.project_name || '(unlabeled)').join(', ');
+                    ctx.toast(`None in shop. "${nameNow}" is at: ${locTxt}`, 'warn');
+                  }
+                })
+                .catch(() => {});
+            }
           }
           // Re-render so the OTHER fields' datalists narrow to whatever is
           // still consistent with the just-set field. Without this each

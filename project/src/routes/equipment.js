@@ -126,6 +126,76 @@ router.get('/display-board', async (req, res, next) => {
 // DETAIL & BARCODE
 // ═══════════════════════════════════════════════════════════
 
+// Equipment-by-name "where is it" lookup (PR #51).
+// GET /api/equipment/by-name-shop-status?name=<equipment_name>
+// Returns:
+//   {
+//     name,
+//     total: N,
+//     in_shop: M,
+//     locations: [{ project_id, project_number, project_name, count }]
+//   }
+// Used by the desktop ticket-request form + mobile equipment-request to
+// surface a "none in shop" advisory toast when every copy of the named
+// equipment is currently out on a job. Caller checks in_shop === 0 and
+// renders the toast with the locations list.
+//
+// Authorize on equipment:read — anyone who can list equipment can see
+// where copies of a named item are. No PII surfaced.
+router.get('/by-name-shop-status', authorize('equipment:read'), async (req, res, next) => {
+  try {
+    const name = String(req.query.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'name query param required' });
+
+    const all = await db('equipment')
+      .where({ equipment_name: name })
+      .whereNot('status', 'retired')
+      .select('id', 'status', 'current_location', 'current_project_id');
+
+    const total = all.length;
+    const inShop = all.filter(e =>
+      e.status === 'available' && (e.current_location === 'shop' || e.current_location === null || e.current_location === '')
+    ).length;
+
+    // Group the out-of-shop copies by project to build the locations list.
+    const outIds = [...new Set(all
+      .filter(e => !(e.status === 'available' && (e.current_location === 'shop' || !e.current_location)))
+      .map(e => e.current_project_id)
+      .filter(Boolean)
+    )];
+    let projectsByid = new Map();
+    if (outIds.length > 0) {
+      const primarySub = db('project_numbers')
+        .select('project_id', 'number as primary_number')
+        .where('label', 'Primary')
+        .as('pn');
+      const rows = await db('projects')
+        .leftJoin(primarySub, 'projects.id', 'pn.project_id')
+        .whereIn('projects.id', outIds)
+        .select('projects.id', 'projects.name', 'pn.primary_number');
+      for (const r of rows) projectsByid.set(r.id, r);
+    }
+    const countByProject = new Map();
+    for (const e of all) {
+      if (e.status === 'available' && (e.current_location === 'shop' || !e.current_location)) continue;
+      const pid = e.current_project_id;
+      if (!pid) continue;
+      countByProject.set(pid, (countByProject.get(pid) || 0) + 1);
+    }
+    const locations = [...countByProject.entries()].map(([pid, count]) => {
+      const p = projectsByid.get(pid) || {};
+      return {
+        project_id: pid,
+        project_number: p.primary_number || null,
+        project_name: p.name || null,
+        count,
+      };
+    }).sort((a, b) => b.count - a.count);
+
+    res.json({ name, total, in_shop: inShop, locations });
+  } catch (err) { next(err); }
+});
+
 // Lookup by barcode (mobile scan)
 router.get('/barcode/:code', authorize('equipment:read'), async (req, res, next) => {
   try {
