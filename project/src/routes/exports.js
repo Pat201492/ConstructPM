@@ -133,17 +133,22 @@ router.post('/builder/download', async (req, res, next) => {
     if (!['csv', 'xlsx', 'pdf'].includes(format)) {
       return res.status(400).json({ error: `unsupported format "${format}"` });
     }
-    const result = await ExportBuilder.execute(source, columns, filters || {});
+    // Pass grouping through the filters bag so ExportBuilder + encoders
+    // can apply it. Body shape: { grouping: { levels:[...], sortBy, sortDir } }.
+    const execFilters = { ...(filters || {}) };
+    if (req.body.grouping) execFilters.grouping = req.body.grouping;
+    const result = await ExportBuilder.execute(source, columns, execFilters);
     const dateStr = new Date().toISOString().split('T')[0];
+    const encOpts = result.grouping ? { grouping: result.grouping } : {};
     if (format === 'xlsx') {
-      const buf = await ExportService.toXLSX(result.headers, result.rows, source);
+      const buf = await ExportService.toXLSX(result.headers, result.rows, source, encOpts);
       const filename = `${source}_export_${dateStr}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(Buffer.from(buf));
     }
     if (format === 'pdf') {
-      const buf = await ExportService.toPDF(result.headers, result.rows, source);
+      const buf = await ExportService.toPDF(result.headers, result.rows, source, encOpts);
       const filename = `${source}_export_${dateStr}.pdf`;
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -170,7 +175,7 @@ router.post('/builder/download', async (req, res, next) => {
 router.post('/builder/email-me', async (req, res, next) => {
   const tmpPaths = [];
   try {
-    const { source, columns, filters, formats, email_subject, email_body_html } = req.body || {};
+    const { source, columns, filters, formats, email_subject, email_body_html, grouping } = req.body || {};
     if (!source) return res.status(400).json({ error: 'source required' });
     if (!Array.isArray(columns) || columns.length === 0) return res.status(400).json({ error: 'columns required' });
     const fmtRequested = Array.isArray(formats) && formats.length > 0 ? formats : ['xlsx'];
@@ -187,7 +192,9 @@ router.post('/builder/email-me', async (req, res, next) => {
     const me = await db('users').where({ id: req.user.id, active: true }).first('email', 'first_name', 'last_name');
     if (!me || !me.email) return res.status(400).json({ error: 'your account has no email on file (or has been deactivated)' });
 
-    const result = await ExportBuilder.execute(source, columns, filters || {});
+    const execFilters = { ...(filters || {}) };
+    if (grouping) execFilters.grouping = grouping;
+    const result = await ExportBuilder.execute(source, columns, execFilters);
     const rowCount = result.total || 0;
     if (rowCount === 0) return res.status(400).json({ error: 'no rows match — adjust columns / filters and retry' });
 
@@ -195,7 +202,7 @@ router.post('/builder/email-me', async (req, res, next) => {
     const stem = `${source}_test_${dateStr}`;
     const attachments = [];
     for (const fmt of fmtList) {
-      const built = await buildTmpAttachment(fmt, result.headers, result.rows, source, stem);
+      const built = await buildTmpAttachment(fmt, result.headers, result.rows, source, stem, result.grouping || null);
       attachments.push(built);
       tmpPaths.push(built.filePath);
     }
@@ -236,11 +243,12 @@ router.post('/builder/email-me', async (req, res, next) => {
 
 // Local helper — mirrors SavedExportRunner._buildAttachment but unbound
 // to a saved row. Writes temp file, returns send-ready descriptor.
-async function buildTmpAttachment(fmt, headers, rows, source, stem) {
+async function buildTmpAttachment(fmt, headers, rows, source, stem, grouping) {
   const tmpStem = path.join(
     os.tmpdir(),
     `email-me-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
   );
+  const encOpts = grouping ? { grouping } : {};
   if (fmt === 'csv') {
     const filePath = `${tmpStem}.csv`;
     await fs.writeFile(filePath, ExportService.toCSV(headers, rows), 'utf8');
@@ -248,7 +256,7 @@ async function buildTmpAttachment(fmt, headers, rows, source, stem) {
   }
   if (fmt === 'xlsx') {
     const filePath = `${tmpStem}.xlsx`;
-    const buf = await ExportService.toXLSX(headers, rows, source);
+    const buf = await ExportService.toXLSX(headers, rows, source, encOpts);
     await fs.writeFile(filePath, Buffer.from(buf));
     return {
       fmt, filePath, filename: `${stem}.xlsx`,
@@ -257,7 +265,7 @@ async function buildTmpAttachment(fmt, headers, rows, source, stem) {
   }
   if (fmt === 'pdf') {
     const filePath = `${tmpStem}.pdf`;
-    const buf = await ExportService.toPDF(headers, rows, source);
+    const buf = await ExportService.toPDF(headers, rows, source, encOpts);
     await fs.writeFile(filePath, Buffer.from(buf));
     return { fmt, filePath, filename: `${stem}.pdf`, contentType: 'application/pdf' };
   }

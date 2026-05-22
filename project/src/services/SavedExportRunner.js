@@ -70,6 +70,10 @@ const SavedExportRunner = {
       // 1+2. Run the export
       const columns = normalizeJsonArray(savedExport.columns);
       const filters = normalizeJsonObject(savedExport.filters);
+      const grouping = normalizeJsonObject(savedExport.grouping);
+      if (grouping && Array.isArray(grouping.levels) && grouping.levels.length > 0) {
+        filters.grouping = grouping;
+      }
       const result = await ExportBuilder.execute(savedExport.source, columns, filters);
       rowCount = result.total || 0;
 
@@ -92,6 +96,7 @@ const SavedExportRunner = {
           savedExport.source,
           savedExport.name,
           savedExport.id,
+          result.grouping || null,
         );
         attachments.push(built);
         tmpPaths.push(built.filePath);
@@ -274,12 +279,13 @@ const SavedExportRunner = {
    * sendEmailWithAttachment. The caller owns cleanup via the returned
    * filePath.
    */
-  async _buildAttachment(fmt, headers, rows, source, exportName, savedExportId) {
+  async _buildAttachment(fmt, headers, rows, source, exportName, savedExportId, grouping) {
     const stem = `${slug(exportName)}_${ymd()}`;
     const tmpStem = path.join(
       os.tmpdir(),
       `saved-export-${savedExportId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     );
+    const encOpts = grouping ? { grouping } : {};
     if (fmt === 'csv') {
       const csv = ExportService.toCSV(headers, rows);
       const filePath = `${tmpStem}.csv`;
@@ -287,7 +293,7 @@ const SavedExportRunner = {
       return { fmt, filePath, filename: `${stem}.csv`, contentType: 'text/csv' };
     }
     if (fmt === 'xlsx') {
-      const buf = await ExportService.toXLSX(headers, rows, source);
+      const buf = await ExportService.toXLSX(headers, rows, source, encOpts);
       const filePath = `${tmpStem}.xlsx`;
       await fs.writeFile(filePath, Buffer.from(buf));
       return {
@@ -298,7 +304,7 @@ const SavedExportRunner = {
       };
     }
     if (fmt === 'pdf') {
-      const buf = await ExportService.toPDF(headers, rows, source);
+      const buf = await ExportService.toPDF(headers, rows, source, encOpts);
       const filePath = `${tmpStem}.pdf`;
       await fs.writeFile(filePath, Buffer.from(buf));
       return {

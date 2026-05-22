@@ -49,6 +49,23 @@ const ExportBuilder = {
       columns = src.native.map(c => c.key);
     }
 
+    // Auto-prepend grouping level columns if the caller picked them as
+    // group keys but didn't include them in the visible columns list. The
+    // renderer needs the value on every row to detect when a level
+    // changes; rather than thread a parallel "hidden columns" channel,
+    // we just put the level columns at the front of the output. They
+    // appear in headers/rows so the renderer can index by header name.
+    const grpLevels = (filters.grouping && Array.isArray(filters.grouping.levels))
+      ? filters.grouping.levels.filter(k => typeof k === 'string' && k.length > 0)
+      : [];
+    if (grpLevels.length > 0) {
+      const prepend = [];
+      for (const k of grpLevels) {
+        if (!columns.includes(k)) prepend.push(k);
+      }
+      if (prepend.length > 0) columns = [...prepend, ...columns];
+    }
+
     // Validate
     const allowed = M.allowedColumnKeys(source);
     const invalid = columns.filter(c => !allowed.has(c));
@@ -133,8 +150,52 @@ const ExportBuilder = {
       query = query.where(filters.scope_column, filters.scope_user_id);
     }
 
-    // Sort + limit
-    if (src.defaultSort) query = query.orderBy(src.defaultSort, 'desc');
+    // Sort. When a grouping spec is present, ORDER BY level1, level2,
+    // level3, sortBy — every level needs to be a contiguous block in the
+    // result set so the renderer can emit a group header each time a key
+    // changes. Levels' joins are added on demand so a grouping column
+    // doesn't have to also be in the visible columns list (the user can
+    // group by PM even if they don't display PM as a column).
+    const grouping = filters.grouping && typeof filters.grouping === 'object' && !Array.isArray(filters.grouping)
+      ? filters.grouping : null;
+    const groupingLevels = (grouping && Array.isArray(grouping.levels)) ? grouping.levels : [];
+
+    function ensureJoinForKey(key) {
+      let r;
+      try { r = M.resolveColumn(source, key); } catch { return null; }
+      if (!r || r.type !== 'joined') return r;
+      const alias = r.alias;
+      if (neededJoins.has(alias)) return r;
+      const j = src.joins[alias];
+      if (!j) return r;
+      if (j.via && !neededJoins.has(j.via)) {
+        const via = src.joins[j.via];
+        query = query.joinRaw(`LEFT JOIN ?? AS ?? ON ${via.on}`, [via.target, j.via]);
+        neededJoins.add(j.via);
+      }
+      query = query.joinRaw(`LEFT JOIN ?? AS ?? ON ${j.on}`, [j.target, alias]);
+      neededJoins.add(alias);
+      return r;
+    }
+
+    let appliedOrder = false;
+    if (groupingLevels.length > 0) {
+      for (const key of groupingLevels) {
+        const r = ensureJoinForKey(key);
+        if (!r || r.type === 'enrichment') continue; // enrichment cols can't drive SQL order
+        query = query.orderByRaw(`?? ASC NULLS LAST`, [r.col]);
+        appliedOrder = true;
+      }
+      if (grouping.sortBy) {
+        const r = ensureJoinForKey(grouping.sortBy);
+        if (r && r.type !== 'enrichment') {
+          const dir = grouping.sortDir === 'desc' ? 'DESC' : 'ASC';
+          query = query.orderByRaw(`?? ${dir} NULLS LAST`, [r.col]);
+          appliedOrder = true;
+        }
+      }
+    }
+    if (!appliedOrder && src.defaultSort) query = query.orderBy(src.defaultSort, 'desc');
     const limit = Math.min(Math.max(parseInt(filters.limit, 10) || DEFAULT_LIMIT, 1), MAX_ROWS);
     query = query.limit(limit);
 
@@ -178,7 +239,20 @@ const ExportBuilder = {
       });
     });
 
-    return { headers, rows, total: rows.length };
+    // Surface grouping metadata so the renderer can find each level's
+    // column index without re-resolving keys. levelHeaders mirrors the
+    // human-readable labels in `headers`. When no grouping was requested
+    // this is just omitted from the response.
+    const out = { headers, rows, total: rows.length };
+    if (grpLevels.length > 0) {
+      const indexByKey = new Map(columns.map((k, i) => [k, i]));
+      out.grouping = {
+        levels: grpLevels.map(k => ({ key: k, index: indexByKey.get(k), label: M.headerForColumn(source, k) })),
+        sortBy: grouping ? grouping.sortBy : null,
+        sortDir: grouping ? grouping.sortDir : null,
+      };
+    }
+    return out;
   },
 };
 

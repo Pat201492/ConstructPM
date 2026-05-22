@@ -169,6 +169,39 @@ function validatePayload(req, { partial = false } = {}) {
     if (!Array.isArray(b.admin_recipients)) errs.push('admin_recipients must be an array of user UUIDs');
     else out.admin_recipients = JSON.stringify(b.admin_recipients);
   }
+  if (b.grouping !== undefined) {
+    if (b.grouping === null) {
+      out.grouping = null;
+    } else if (typeof b.grouping !== 'object' || Array.isArray(b.grouping)) {
+      errs.push('grouping must be an object or null');
+    } else {
+      const g = b.grouping;
+      const src = b.source || out.source;
+      const allowed = src ? M.allowedColumnKeys(src) : null;
+      const cleanLevels = Array.isArray(g.levels) ? g.levels.filter(l => typeof l === 'string' && l.length > 0) : [];
+      if (cleanLevels.length > 3) errs.push('grouping.levels must have at most 3 entries');
+      if (allowed && cleanLevels.some(l => !allowed.has(l))) {
+        errs.push(`grouping.levels references unknown column for "${src}"`);
+      }
+      let cleanSortBy = null;
+      if (g.sortBy !== undefined && g.sortBy !== null && g.sortBy !== '') {
+        if (typeof g.sortBy !== 'string') errs.push('grouping.sortBy must be a string or null');
+        else if (allowed && !allowed.has(g.sortBy)) errs.push(`grouping.sortBy "${g.sortBy}" is not a valid column for "${src}"`);
+        else cleanSortBy = g.sortBy;
+      }
+      let cleanSortDir = 'asc';
+      if (g.sortDir !== undefined && g.sortDir !== null && g.sortDir !== '') {
+        if (g.sortDir !== 'asc' && g.sortDir !== 'desc') errs.push('grouping.sortDir must be "asc" or "desc"');
+        else cleanSortDir = g.sortDir;
+      }
+      out.grouping = JSON.stringify({
+        levels: cleanLevels,
+        sortBy: cleanSortBy,
+        sortDir: cleanSortDir,
+      });
+    }
+  }
+
   if (b.export_formats !== undefined) {
     if (!Array.isArray(b.export_formats)) errs.push('export_formats must be an array');
     else {
@@ -203,6 +236,7 @@ function serialize(row, { includeOwner = false } = {}) {
     recipients: typeof row.recipients === 'string' ? JSON.parse(row.recipients) : (row.recipients || []),
     admin_recipients: typeof row.admin_recipients === 'string' ? JSON.parse(row.admin_recipients) : (row.admin_recipients || []),
     export_formats: typeof row.export_formats === 'string' ? JSON.parse(row.export_formats) : (row.export_formats || ['csv']),
+    grouping: typeof row.grouping === 'string' ? JSON.parse(row.grouping) : (row.grouping || null),
   };
   if (!includeOwner) delete out.owner_user_id;
   return out;

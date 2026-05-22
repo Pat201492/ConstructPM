@@ -31,7 +31,7 @@ const ExportService = {
   //
   // sheetName is sanitized to ExcelJS's 31-char limit with the reserved
   // characters stripped — the workbook throws if violated.
-  async toXLSX(headers, rows, sheetName) {
+  async toXLSX(headers, rows, sheetName, opts = {}) {
     const ExcelJS = require('exceljs');
     const wb = new ExcelJS.Workbook();
     wb.creator = 'ConstructPM';
@@ -48,8 +48,58 @@ const ExportService = {
     sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    for (const row of rows) {
-      sheet.addRow(headers.map((_h, i) => coerceCell(row[i])));
+    const grpLevels = (opts.grouping && Array.isArray(opts.grouping.levels))
+      ? opts.grouping.levels
+      : [];
+
+    if (grpLevels.length === 0) {
+      // Flat path — same as before.
+      for (const row of rows) {
+        sheet.addRow(headers.map((_h, i) => coerceCell(row[i])));
+      }
+    } else {
+      // Grouped path. Walk rows; whenever a level value differs from the
+      // previous row's value at that level (or any shallower level), emit
+      // a group header row showing the changing value. Header rows are
+      // bold + banded; the cell value is the new group key with the
+      // level's column label prefixed for clarity ("PM — Mike Torres").
+      const prev = grpLevels.map(() => undefined);
+      const levelFills = ['FFDBEAFE', 'FFE8E8E8', 'FFF3E8FF']; // 3 distinct band colours
+      for (const row of rows) {
+        // Detect deepest level that changed; once a level changes, all
+        // deeper levels are reset (so a new PM also re-prints the new
+        // Customer header even if the customer name happens to match).
+        let changedAt = -1;
+        for (let li = 0; li < grpLevels.length; li++) {
+          const v = row[grpLevels[li].index];
+          if (v !== prev[li]) { changedAt = li; break; }
+        }
+        if (changedAt !== -1) {
+          for (let li = changedAt; li < grpLevels.length; li++) {
+            const lvl = grpLevels[li];
+            const newVal = row[lvl.index];
+            const hr = sheet.addRow([]);
+            // Merge across all columns so the heading reads as a band.
+            const startCol = 1;
+            const endCol = headers.length;
+            sheet.mergeCells(hr.number, startCol, hr.number, endCol);
+            const cell = hr.getCell(startCol);
+            // Indent with leading spaces by level so a 2-level grouping
+            // visually nests on screen.
+            const indent = '    '.repeat(li);
+            cell.value = `${indent}${lvl.label}: ${newVal == null || newVal === '' ? '(none)' : newVal}`;
+            cell.font = { bold: true, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: levelFills[Math.min(li, levelFills.length - 1)] } };
+            prev[li] = newVal;
+          }
+          // Clear any deeper "previous" values so the next row's change
+          // detection starts fresh below the change point.
+          for (let li = changedAt + 1; li < grpLevels.length; li++) {
+            prev[li] = row[grpLevels[li].index];
+          }
+        }
+        sheet.addRow(headers.map((_h, i) => coerceCell(row[i])));
+      }
     }
 
     // Auto-fit: walk each column, pick the widest cell content (including
@@ -74,12 +124,56 @@ const ExportService = {
   // with the same shape they call toXLSX / toCSV. The underlying renderer
   // is the same one the fan-out runner uses for per-user-role multi-
   // section reports — one PDF code path in the codebase.
-  async toPDF(headers, rows, sourceName) {
+  async toPDF(headers, rows, sourceName, opts = {}) {
     const ExportFileGenerator = require('./ExportFileGenerator');
-    return ExportFileGenerator.toPDF(
-      [{ name: sourceName || 'Export', headers, rows }],
-      { title: sourceName || 'ConstructPM Export' },
-    );
+    const grpLevels = (opts.grouping && Array.isArray(opts.grouping.levels))
+      ? opts.grouping.levels
+      : [];
+
+    // Flat path — single section.
+    if (grpLevels.length === 0) {
+      return ExportFileGenerator.toPDF(
+        [{ name: sourceName || 'Export', headers, rows }],
+        { title: sourceName || 'ConstructPM Export' },
+      );
+    }
+
+    // Grouped path. ExportFileGenerator already paginates sections with
+    // their own headings, so the cheapest faithful render is "one section
+    // per distinct combination of grouping-level values, named with the
+    // joined level labels". For multi-level grouping the section name
+    // prints all the level values joined by " · " so a reader sees the
+    // full path at the top of each block.
+    const sections = [];
+    let currentKey = null;
+    let currentName = null;
+    let bucket = [];
+    const flush = () => {
+      if (currentName === null) return;
+      sections.push({ name: currentName, headers, rows: bucket });
+      bucket = [];
+    };
+    for (const row of rows) {
+      const parts = grpLevels.map(l => {
+        const v = row[l.index];
+        return `${l.label}: ${v == null || v === '' ? '(none)' : v}`;
+      });
+      const key = parts.join('|');
+      if (key !== currentKey) {
+        flush();
+        currentKey = key;
+        currentName = parts.join(' · ');
+      }
+      bucket.push(row);
+    }
+    flush();
+
+    if (sections.length === 0) sections.push({ name: sourceName || 'Export', headers, rows: [] });
+
+    return ExportFileGenerator.toPDF(sections, {
+      title: sourceName || 'ConstructPM Export',
+      alwaysShowSectionHeading: true,
+    });
   },
 
   _fmtDate(v) { if (!v) return ''; const d = new Date(v); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; },
