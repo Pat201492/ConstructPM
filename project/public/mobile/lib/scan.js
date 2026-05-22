@@ -54,11 +54,14 @@ export async function showScanner({ title = 'Scan barcode', onLookup } = {}) {
     let torchOn = false;
     let videoTrack = null;
 
-    const cleanup = () => {
+    const cleanup = async () => {
       done = true;
-      try {
-        if (videoTrack && torchOn) videoTrack.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
-      } catch {}
+      // Await the torch-off constraint before stopping the track so the
+      // LED actually extinguishes — otherwise controls.stop() can race
+      // and tear down the track while the constraint is still pending.
+      if (videoTrack && torchOn) {
+        try { await videoTrack.applyConstraints({ advanced: [{ torch: false }] }); } catch {}
+      }
       try { controls?.stop(); } catch {}
       try { root.remove(); } catch {}
     };
