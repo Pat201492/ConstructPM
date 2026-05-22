@@ -645,6 +645,34 @@ const ALL_TABS = [
   { id: 'admin', label: 'Admin' },
 ];
 
+// Tab → feature flag mapping (mirrors public/index.html:1078-1085).
+// Tabs not in this map are always shown. Default-on semantics: a
+// missing flag row in global_variables means the feature is enabled.
+const TAB_FEATURE_MAP = {
+  financials: 'invoices_enabled',
+  inbox: 'inbox_enabled',
+  timesheets: 'timesheets_enabled',
+  'oil-samples': 'oil_samples_enabled',
+  'field-notes': 'field_notes_enabled',
+};
+
+// Returns ALL_TABS with feature-disabled entries filtered out. Used by
+// /admin/roles and /admin/users/:id/access so the role-permission UI
+// only offers tabs that are actually reachable in this firm's
+// configuration — previously the UI showed every tab even when the
+// feature flag was off, and admins could grant access to dead tabs.
+async function getAvailableTabs() {
+  const rows = await db('global_variables').where('key', 'like', 'feature.%');
+  const enabled = {};
+  rows.forEach(r => { enabled[r.key.replace(/^feature\./, '')] = r.value === 'true'; });
+  return ALL_TABS.filter(tab => {
+    const flag = TAB_FEATURE_MAP[tab.id];
+    if (!flag) return true;
+    if (enabled[flag] === undefined) return true; // default-on
+    return enabled[flag];
+  });
+}
+
 // GET /api/admin/roles — list all role configurations
 router.get('/roles', async (req, res, next) => {
   try {
@@ -654,7 +682,7 @@ router.get('/roles', async (req, res, next) => {
       if (typeof r.allowed_tabs === 'string') r.allowed_tabs = JSON.parse(r.allowed_tabs);
       if (typeof r.permissions === 'string') r.permissions = JSON.parse(r.permissions);
     });
-    res.json({ roles, available_tabs: ALL_TABS });
+    res.json({ roles, available_tabs: await getAvailableTabs() });
   } catch (err) { next(err); }
 });
 
@@ -665,7 +693,7 @@ router.get('/roles/:roleName', async (req, res, next) => {
     if (!role) return res.status(404).json({ error: 'Role not found' });
     if (typeof role.allowed_tabs === 'string') role.allowed_tabs = JSON.parse(role.allowed_tabs);
     if (typeof role.permissions === 'string') role.permissions = JSON.parse(role.permissions);
-    res.json({ role, available_tabs: ALL_TABS });
+    res.json({ role, available_tabs: await getAvailableTabs() });
   } catch (err) { next(err); }
 });
 
@@ -778,7 +806,7 @@ router.get('/users/:id/access', async (req, res, next) => {
       user_access_config: user.access_config ? (typeof user.access_config === 'string' ? JSON.parse(user.access_config) : user.access_config) : {},
       bid_assignments: bidAssignments,
       project_assignments: projectAssignments,
-      available_tabs: ALL_TABS,
+      available_tabs: await getAvailableTabs(),
     });
   } catch (err) { next(err); }
 });
