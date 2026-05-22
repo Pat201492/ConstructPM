@@ -56,29 +56,58 @@ const WorkOrderService = {
       return null;
     }
 
-    const nextVersion = latest ? latest.version + 1 : 1;
-    const dateStr = new Date().toISOString().split('T')[0];
-    const filename = `WorkOrder_v${nextVersion}_${dateStr}.pdf`;
+    // Two concurrent PATCH hooks on the same project could both read the
+    // same `latest.version` and try to INSERT the same `version + 1`,
+    // colliding on the UNIQUE (project_id, version) index. Retry once
+    // with a fresh max-version read if that happens. The hook is fire-
+    // and-forget, so a 23505 would otherwise vanish into console.error.
+    let row = null;
+    let attempts = 0;
+    while (attempts < 3) {
+      attempts++;
+      const cur = await db('project_work_orders')
+        .where({ project_id: projectId })
+        .max({ v: 'version' })
+        .first();
+      const nextVersion = (cur && cur.v) ? cur.v + 1 : 1;
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `WorkOrder_v${nextVersion}_${dateStr}.pdf`;
 
-    // Render the PDF.
-    const buf = await renderWorkOrderPDF(inputs, nextVersion);
+      const buf = await renderWorkOrderPDF(inputs, nextVersion);
+      const folderPath = await ensureProjectWorkOrderFolder(inputs);
+      const filePath = path.join(folderPath, filename);
+      await fs.writeFile(filePath, Buffer.from(buf));
 
-    // Write into the project's storage folder under a new "work_orders"
-    // subfolder. Folder is created on-demand; createProjectFolders has
-    // already laid down the parent project folder during project create,
-    // but a project that pre-dated the work-order feature won't have it.
-    // Use the parent folder pattern: storage/projects/{year}/{pm}/{cust}/{proj}/
-    const folderPath = await ensureProjectWorkOrderFolder(inputs);
-    const filePath = path.join(folderPath, filename);
-    await fs.writeFile(filePath, Buffer.from(buf));
-
-    const [row] = await db('project_work_orders').insert({
-      project_id: projectId,
-      version: nextVersion,
-      file_path: filePath,
-      content_hash: contentHash,
-      generated_by_user_id: opts.userId || null,
-    }).returning('*');
+      try {
+        [row] = await db('project_work_orders').insert({
+          project_id: projectId,
+          version: nextVersion,
+          file_path: filePath,
+          content_hash: contentHash,
+          generated_by_user_id: opts.userId || null,
+        }).returning('*');
+        break;
+      } catch (err) {
+        // 23505 = unique_violation. Could be (project_id, version) — a
+        // concurrent writer beat us — or (project_id, content_hash) — the
+        // concurrent writer happened to produce the same hash (effectively
+        // the same dedupe outcome, just async). In both cases, retrying
+        // re-reads max version and either steps to the next slot or finds
+        // the hash already present and bails via the dedupe check above.
+        if (err && err.code === '23505') {
+          // Clean up the temp file we just wrote since we won't be
+          // referencing it from any row.
+          await fs.unlink(filePath).catch(() => {});
+          // Re-check dedupe with the latest after this race.
+          const afterRace = await db('project_work_orders')
+            .where({ project_id: projectId, content_hash: contentHash })
+            .first();
+          if (afterRace) return null; // the other writer landed the same content
+          continue; // retry with a higher version
+        }
+        throw err;
+      }
+    }
     return row;
   },
 
