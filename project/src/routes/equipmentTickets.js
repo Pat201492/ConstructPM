@@ -550,8 +550,12 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
     }
   }
 
+  // req.user comes from authenticate middleware which decodes JWT into
+  // camelCase fields (firstName/lastName). DB rows use snake_case. Read
+  // both so this works whether the caller passes a JWT-decoded user
+  // (HTTP path) or a DB row (future deferred-worker path).
   const createdByName = triggerUser
-    ? `${triggerUser.first_name || ''} ${triggerUser.last_name || ''}`.trim()
+    ? `${triggerUser.first_name || triggerUser.firstName || ''} ${triggerUser.last_name || triggerUser.lastName || ''}`.trim()
     : '';
 
   // Build the equipment-list HTML table from the requested lines (qty +
