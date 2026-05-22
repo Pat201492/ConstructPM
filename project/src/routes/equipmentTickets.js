@@ -545,6 +545,23 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
     ? `${triggerUser.first_name || ''} ${triggerUser.last_name || ''}`.trim()
     : '';
 
+  // Build the equipment-list HTML table from the requested lines (qty +
+  // name only — Pat: "no equipment numbers just names and qtys"). esc()
+  // every cell so a malicious-or-typo'd name can't inject markup; the
+  // template uses {{{equipment_table_html}}} (raw) to drop this in.
+  const lineRows = await db('ticket_equipment').where('ticket_number', ticketNumber);
+  const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const tdStyle = 'padding:6px 12px;border:1px solid #e2e8f0;font-size:13px';
+  const thStyle = tdStyle + ';background:#f1f5f9;text-align:left;font-weight:600';
+  const bodyRows = (lineRows && lineRows.length > 0)
+    ? lineRows.map(l => `<tr><td style="${tdStyle};text-align:right;width:60px">${escHtml(l.quantity || 1)}</td><td style="${tdStyle}">${escHtml(l.equipment_name || '—')}</td></tr>`).join('')
+    : `<tr><td colspan="2" style="${tdStyle};color:#888;font-style:italic">(no line items)</td></tr>`;
+  const equipmentTableHtml =
+    `<table style="border-collapse:collapse;margin-top:6px">` +
+      `<thead><tr><th style="${thStyle};width:60px">Qty</th><th style="${thStyle}">Equipment</th></tr></thead>` +
+      `<tbody>${bodyRows}</tbody>` +
+    `</table>`;
+
   const rendered = await EmailTemplateService.render(
     'ticket_ready_pickup',
     {
@@ -553,6 +570,7 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
       pickup_person: project.pickup_person || '',
       location: locationLine,
       created_by_name: createdByName,
+      equipment_table_html: equipmentTableHtml,
     },
     null,
   );
