@@ -694,6 +694,15 @@ async function createProjectFromBid(bid, confirmedFields) {
     } catch { /* notification failure not fatal */ }
   }
 
+  // Generate the initial Work Order PDF (PR #50). Fire-and-forget so a
+  // PDF hiccup never blocks the project-creation response. The service
+  // dedupes against the latest version via content_hash, so re-firing
+  // this hook is safe.
+  try {
+    const WorkOrderService = require('../services/WorkOrderService');
+    WorkOrderService.generateInBackground(result.project.id, { reason: 'project_created_from_bid' });
+  } catch { /* require failure / async setup is non-fatal */ }
+
   return result;
 }
 

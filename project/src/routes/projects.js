@@ -674,7 +674,69 @@ router.patch('/:id', authorize('projects:update'), [param('id').isUUID()], async
       }
     }
 
+    // Auto-regenerate the Work Order PDF (PR #50). Fire-and-forget;
+    // content_hash dedupes against the latest version so a save that
+    // didn't touch any WO-relevant field doesn't bump versions.
+    try {
+      const WorkOrderService = require('../services/WorkOrderService');
+      WorkOrderService.generateInBackground(project.id, { userId: req.user?.id, reason: 'project_patched' });
+    } catch { /* require / async non-fatal */ }
+
     res.json({ project });
+  } catch (err) { next(err); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// WORK ORDERS (PR #50)
+// ═══════════════════════════════════════════════════════════
+
+// GET /:id/work-orders — list versions newest-first
+router.get('/:id/work-orders', authorize('projects:read'), [param('id').isUUID()], async (req, res, next) => {
+  try {
+    const WorkOrderService = require('../services/WorkOrderService');
+    // Ownership gate matches the rest of /:id reads.
+    const existing = await Project.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role === ROLES.PROJECT_MANAGER && existing.pm_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const rows = await WorkOrderService.listForProject(req.params.id);
+    res.json({ work_orders: rows });
+  } catch (err) { next(err); }
+});
+
+// GET /:id/work-orders/:version/download — stream the PDF
+router.get('/:id/work-orders/:version/download', authorize('projects:read'), [param('id').isUUID()], async (req, res, next) => {
+  try {
+    const WorkOrderService = require('../services/WorkOrderService');
+    const existing = await Project.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role === ROLES.PROJECT_MANAGER && existing.pm_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const v = parseInt(req.params.version, 10);
+    if (!Number.isInteger(v) || v < 1) return res.status(400).json({ error: 'Invalid version' });
+    const row = await WorkOrderService.getVersion(req.params.id, v);
+    if (!row) return res.status(404).json({ error: 'Work Order version not found' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="WorkOrder_v${v}.pdf"`);
+    res.sendFile(row.file_path);
+  } catch (err) { next(err); }
+});
+
+// POST /:id/work-orders/regenerate — manual re-render. Useful when the
+// auto-trigger dedupes against an unchanged hash but the user wants a
+// fresh PDF anyway (e.g. brand template tweak landed).
+router.post('/:id/work-orders/regenerate', authorize('projects:update'), [param('id').isUUID()], async (req, res, next) => {
+  try {
+    const WorkOrderService = require('../services/WorkOrderService');
+    const existing = await Project.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    if (req.user.role === ROLES.PROJECT_MANAGER && existing.pm_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const row = await WorkOrderService.generateForProject(req.params.id, { userId: req.user.id, reason: 'manual_regenerate' });
+    res.json({ work_order: row, deduped: row === null });
   } catch (err) { next(err); }
 });
 

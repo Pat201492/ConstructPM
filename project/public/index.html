@@ -3040,6 +3040,69 @@ async function renderProjectDetail(main) {
   })();
   } // end Invoices section
 
+  // ─── Work Orders section (PR #50) ───────────────────────────
+  // Auto-generated PDF each time the project's contact/location/numbering
+  // data changes. Versioned, newest first. Manual regenerate button
+  // forces a new version even if content_hash matches the latest (e.g.
+  // for re-pulling after a template tweak).
+  const woSection = h('div',{style:'margin-top:24px'});
+  const woHdr = h('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'});
+  woHdr.append(h('h3',{},'Work Orders'));
+  woHdr.append(h('button',{className:'btn-outline btn-sm',onclick:async()=>{
+    try {
+      const r = await api(`/projects/${p.id}/work-orders/regenerate`, { method: 'POST' });
+      if (r.deduped) alert('No changes since the last Work Order — same content, no new version created.');
+      else alert(`Generated v${r.work_order.version}.`);
+      loadWorkOrders();
+    } catch (e) { alert(e.message); }
+  }},'Regenerate'));
+  woSection.append(woHdr);
+  const woList = h('div');
+  woSection.append(woList);
+  main.append(woSection);
+  async function loadWorkOrders() {
+    woList.innerHTML = 'Loading…';
+    try {
+      const r = await api(`/projects/${p.id}/work-orders`);
+      const rows = r.work_orders || [];
+      woList.innerHTML = '';
+      if (rows.length === 0) {
+        woList.append(h('p',{style:'color:var(--text3);font-style:italic'},'No Work Orders yet. They auto-generate on project create + edit.'));
+        return;
+      }
+      rows.forEach(row => {
+        const item = h('div',{style:'display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px;font-size:12px'});
+        item.append(h('strong',{style:'color:var(--primary)'},'v' + row.version));
+        item.append(h('span',{style:'color:var(--text2)'}, new Date(row.generated_at).toLocaleString()));
+        item.append(h('span',{style:'flex:1'}));
+        // Download endpoint requires Bearer auth, so use fetch + blob
+        // rather than a naked anchor href.
+        item.append(h('button',{
+          className: 'btn-outline btn-sm',
+          onclick: async () => {
+            try {
+              const resp = await fetch(`/api/projects/${p.id}/work-orders/${row.version}/download`, {
+                headers: { 'Authorization': 'Bearer ' + S.token },
+              });
+              if (!resp.ok) throw new Error('Download failed (' + resp.status + ')');
+              const blob = await resp.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = `WorkOrder_v${row.version}.pdf`;
+              document.body.append(a); a.click(); a.remove();
+              URL.revokeObjectURL(url);
+            } catch (err) { alert(err.message); }
+          },
+        }, 'Download'));
+        woList.append(item);
+      });
+    } catch (e) {
+      woList.innerHTML = '';
+      woList.append(h('p',{style:'color:var(--red)'}, 'Could not load Work Orders: ' + e.message));
+    }
+  }
+  loadWorkOrders();
+
   // ─── Timesheets section ─────────────────────────────────────
   if (featureEnabled('timesheets_enabled')) {
   const tsSection=h('div',{style:'margin-top:24px'});
