@@ -306,26 +306,24 @@ function cv(key, label, sample, extra = {}) {
   return { key, label, sample: sample == null ? '' : String(sample), emailable: !!extra.emailable };
 }
 
+// Single-pass alternation — triple-brace OR double-brace in one
+// regex so a triple-brace value containing `{{x}}` does NOT get
+// re-substituted by a second pass. Mirrors EmailTemplateService's
+// MUSTACHE_RE (extended here to permit dotted keys like
+// `location.map_link`, which the bid-template engine doesn't expose).
+const TOKEN_RE = /\{\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}\}|\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}/g;
+
 function substitute(rawString, vars, opts = {}) {
   if (typeof rawString !== 'string' || rawString.length === 0) return '';
   const escape = opts.escape !== false; // default: escape (body)
-  // Triple-brace runs first so the double-brace pass doesn't see them.
-  // Triple is always raw (the caller already produced safe HTML — used
-  // for vars like location.map_link that emit an anchor tag). Matches
-  // EmailTemplateService delimiter semantics so authors carry the same
-  // intuition between the two engines.
-  let out = rawString.replace(/\{\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}\}/g, (_m, key) => {
-    const v = vars[key];
-    if (v === undefined || v === null) return '';
-    return String(v);
-  });
-  out = out.replace(/\{\{\s*([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)*)\s*\}\}/g, (_m, key) => {
+  return rawString.replace(TOKEN_RE, (_m, rawKey, escKey) => {
+    const key = rawKey || escKey;
+    const isRaw = !!rawKey;
     const v = vars[key];
     if (v === undefined || v === null) return '';
     const s = String(v);
-    return escape ? escapeHtml(s) : s;
+    return (isRaw || !escape) ? s : escapeHtml(s);
   });
-  return out;
 }
 
 function escapeHtml(s) {

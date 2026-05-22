@@ -40,7 +40,7 @@ exports.up = async function (knex) {
 <p><strong>Site Contact:</strong> {{site_contact.name}} — {{site_contact.phone}}</p>
 <p><strong>Crew ({{crew_count}}):</strong> {{crew_names}}</p>
 <p>{{day_notes}}</p>
-<p style="color:#888;font-size:12px;margin-top:24px">Sent from ConstructPM.</p>`;
+<p style="color:#888;font-size:12px;margin-top:24px">Sent from ConstructPM's Email Day to Staff. Reply to your PM with any questions.</p>`;
 
   // Extend the variables list so the admin Templates UI shows the new
   // placeholders alongside the existing ones.
@@ -69,7 +69,7 @@ exports.down = async function (knex) {
 <p><strong>Location:</strong> {{location}}<br>
 <strong>Crew ({{crew_count}}):</strong> {{crew_names}}</p>
 <p>{{day_notes}}</p>
-<p style="color:#888;font-size:12px;margin-top:24px">Sent from ConstructPM.</p>`;
+<p style="color:#888;font-size:12px;margin-top:24px">Sent from ConstructPM's Email Day to Staff. Reply to your PM with any questions.</p>`;
   await knex('email_templates').where({ key: 'email_day_to_staff' }).update({
     body_html: oldBody,
     updated_at: knex.fn.now(),
