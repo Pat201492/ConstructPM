@@ -47,7 +47,7 @@ exports.up = async function (knex) {
   for (const row of defaultRows) {
     const newFilename = `admin_default_bid_${Date.now()}_${row.id}.docx`;
     const newRelPath = `templates/bid/${newFilename}`;
-    const newAbsPath = path.join(basePath, newRelPath.replace(/^templates\//, 'templates/'));
+    const newAbsPath = path.join(basePath, newRelPath);
     fs.writeFileSync(newAbsPath, newBuffer);
     await knex('bid_templates').where({ id: row.id }).update({
       file_path: newRelPath,

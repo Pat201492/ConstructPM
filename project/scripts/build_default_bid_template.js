@@ -99,7 +99,8 @@ const doc = new Document({
                 children: [
                   new Paragraph({ children: [labelRun('TO')] }),
                   new Paragraph({ children: [mf('Customer Name')] }),
-                  new Paragraph({ children: [mf('Customer Contact Name')] }),
+                  new Paragraph({ children: [mf('Customer Address')] }),
+                  new Paragraph({ children: [mf('Customer Contact Name'), plainRun(' — '), mf('Customer Contact Company')] }),
                   new Paragraph({ children: [mf('Customer Contact Phone')] }),
                   new Paragraph({ children: [mf('Customer Contact Email')] }),
                 ],
@@ -111,6 +112,7 @@ const doc = new Document({
                   new Paragraph({ children: [mf('Location Name')] }),
                   new Paragraph({ children: [mf('Location Address')] }),
                   new Paragraph({ children: [labelRun('Union: '), mf('Local Union')] }),
+                  new Paragraph({ children: [labelRun('Miles from HQ: '), mf('Miles from HQ')] }),
                 ],
               }),
             ],
