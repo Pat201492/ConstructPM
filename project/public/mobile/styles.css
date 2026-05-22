@@ -155,10 +155,37 @@ textarea { min-height: 96px; resize: vertical; }
   position: absolute; inset: 0; pointer-events: none;
   display: flex; align-items: center; justify-content: center;
 }
-.scan .reticle {
-  width: 70%; max-width: 320px; aspect-ratio: 1;
-  border: 2px solid #fff; border-radius: 16px;
-  box-shadow: 0 0 0 9999px rgba(0,0,0,0.4);
+/* Corner-bracket target with a horizontal scanning line. Replaces the
+   plain rounded square so the user knows where the decoder is looking
+   and gets the familiar "barcode scanner" affordance. */
+.scan .scan-target {
+  position: relative;
+  width: 80%; max-width: 340px;
+  aspect-ratio: 1.4;          /* wider than tall — fits typical 1D barcodes */
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.45);
+  border-radius: 8px;
+}
+.scan .scan-corner {
+  position: absolute;
+  width: 28px; height: 28px;
+  border: 3px solid #fff;
+}
+.scan .scan-corner.tl { top: 0; left: 0;     border-right: 0; border-bottom: 0; border-top-left-radius: 6px; }
+.scan .scan-corner.tr { top: 0; right: 0;    border-left: 0;  border-bottom: 0; border-top-right-radius: 6px; }
+.scan .scan-corner.bl { bottom: 0; left: 0;  border-right: 0; border-top: 0;    border-bottom-left-radius: 6px; }
+.scan .scan-corner.br { bottom: 0; right: 0; border-left: 0;  border-top: 0;    border-bottom-right-radius: 6px; }
+.scan .scan-line {
+  position: absolute;
+  left: 8%; right: 8%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--danger), transparent);
+  box-shadow: 0 0 8px var(--danger);
+  animation: scan-sweep 1.8s ease-in-out infinite alternate;
+  top: 12%;
+}
+@keyframes scan-sweep {
+  from { top: 12%; }
+  to   { top: 88%; }
 }
 .scan .scan-footer {
   padding: 16px; padding-bottom: calc(16px + var(--safe-bot));
