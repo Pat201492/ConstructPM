@@ -181,8 +181,11 @@ router.post('/builder/email-me', async (req, res, next) => {
     // Recipient = caller. Look up email from active users only — a logged-
     // in user without an email on file (rare; admin without contact) can't
     // self-test until they update their profile.
-    const me = await db('users').where('id', req.user.id).first('email', 'first_name', 'last_name');
-    if (!me || !me.email) return res.status(400).json({ error: 'your account has no email on file — add one to use this' });
+    // Defence-in-depth: an admin can deactivate a user, but the user's JWT
+    // stays valid until expiry. Re-check active here so a deactivated
+    // account can't keep self-mailing reports after losing access.
+    const me = await db('users').where({ id: req.user.id, active: true }).first('email', 'first_name', 'last_name');
+    if (!me || !me.email) return res.status(400).json({ error: 'your account has no email on file (or has been deactivated)' });
 
     const result = await ExportBuilder.execute(source, columns, filters || {});
     const rowCount = result.total || 0;
