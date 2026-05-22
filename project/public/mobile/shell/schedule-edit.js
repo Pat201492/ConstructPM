@@ -45,18 +45,26 @@ export async function openScheduleEdit(projectId, { onSaved, toast } = {}) {
   // Tapping the dim area (outside the sheet) cancels.
   overlay.onclick = (e) => { if (e.target === overlay) close(); };
 
-  // Load project + schedule in parallel.
+  // Load project + schedule in parallel. We deliberately do NOT swallow
+  // the /schedule failure with a {all-false} fallback — if the endpoint
+  // 500s, the user would unknowingly edit a fake baseline and save
+  // incorrect working-day data. Surface the error and let them retry.
   let project, sched;
   try {
     [project, sched] = await Promise.all([
       api('/projects/' + projectId).then(r => r.project || r),
-      api('/projects/' + projectId + '/schedule').catch(() => ({ works_saturday: false, works_sunday: false, weekend_only: false })),
+      api('/projects/' + projectId + '/schedule'),
     ]);
   } catch (e) {
+    if (!document.contains(overlay)) return;
     sheet.innerHTML = `<div class="empty"><div class="ico">⚠️</div><div>${esc(e.message || 'Failed to load')}</div><button class="btn secondary" style="margin-top:12px" data-close>Close</button></div>`;
     sheet.querySelector('[data-close]').onclick = close;
     return;
   }
+  // If the user tapped a second notification while we were awaiting the
+  // loads, openScheduleEdit replaced activeOverlay with a fresh one and
+  // removed this overlay from the DOM. Don't fill the dead sheet.
+  if (!document.contains(overlay)) return;
 
   const state = {
     start_date: fmtDate(project.start_date),
@@ -117,16 +125,18 @@ export async function openScheduleEdit(projectId, { onSaved, toast } = {}) {
 
   async function save() {
     state.busy = true; state.error = ''; render();
+    // Track which half succeeded so a half-failure shows actionable
+    // text rather than a generic error (project saved but overrides
+    // didn't — user knows what to retry).
+    let projectSaved = false;
     try {
-      // PATCH the project body first (start_date / length / manpower).
-      // If this fails we don't touch the schedule overrides — the user
-      // sees the original data on retry, no half-applied state.
       const projectPayload = {
         start_date: state.start_date || null,
         project_length_days: state.project_length_days === '' ? null : (parseInt(state.project_length_days, 10) || 0),
         manpower: state.manpower === '' ? null : (parseInt(state.manpower, 10) || 0),
       };
       await api('/projects/' + projectId, { method: 'PATCH', body: JSON.stringify(projectPayload) });
+      projectSaved = true;
       await api('/projects/' + projectId + '/schedule', { method: 'PATCH', body: JSON.stringify({
         works_saturday: state.works_saturday,
         works_sunday: state.works_sunday,
@@ -136,7 +146,9 @@ export async function openScheduleEdit(projectId, { onSaved, toast } = {}) {
       onSaved?.();
       close();
     } catch (e) {
-      state.error = e.message || 'Save failed';
+      state.error = projectSaved
+        ? `Working-day overrides failed (${e.message || 'unknown'}). Start date, length, and manpower DID save — tap Save again to retry the toggles.`
+        : (e.message || 'Save failed');
       state.busy = false;
       render();
     }
