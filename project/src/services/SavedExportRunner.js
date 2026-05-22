@@ -297,7 +297,17 @@ const SavedExportRunner = {
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       };
     }
-    // pdf intentionally not implemented in PR #45 — added in PR #46.
+    if (fmt === 'pdf') {
+      const buf = await ExportService.toPDF(headers, rows, source);
+      const filePath = `${tmpStem}.pdf`;
+      await fs.writeFile(filePath, Buffer.from(buf));
+      return {
+        fmt,
+        filePath,
+        filename: `${stem}.pdf`,
+        contentType: 'application/pdf',
+      };
+    }
     throw new Error(`Unsupported export format: ${fmt}`);
   },
 

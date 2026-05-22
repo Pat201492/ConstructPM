@@ -125,7 +125,7 @@ router.post('/builder/download', async (req, res, next) => {
     const { source, columns, filters } = req.body;
     if (!source) return res.status(400).json({ error: 'source required' });
     const format = String(req.query.format || 'csv').toLowerCase();
-    if (!['csv', 'xlsx'].includes(format)) {
+    if (!['csv', 'xlsx', 'pdf'].includes(format)) {
       return res.status(400).json({ error: `unsupported format "${format}"` });
     }
     const result = await ExportBuilder.execute(source, columns, filters || {});
@@ -134,6 +134,13 @@ router.post('/builder/download', async (req, res, next) => {
       const buf = await ExportService.toXLSX(result.headers, result.rows, source);
       const filename = `${source}_export_${dateStr}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(Buffer.from(buf));
+    }
+    if (format === 'pdf') {
+      const buf = await ExportService.toPDF(result.headers, result.rows, source);
+      const filename = `${source}_export_${dateStr}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       return res.send(Buffer.from(buf));
     }
