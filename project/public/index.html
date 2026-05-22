@@ -7480,6 +7480,7 @@ async function renderExports(main) {
     actions.append(h('button',{className:'btn',onclick:() => doDownload('xlsx')},'Download Excel'));
     actions.append(h('button',{className:'btn',onclick:() => doDownload('pdf')},'Download PDF'));
     actions.append(h('button',{className:'btn-outline',onclick:doPreview},'Preview'));
+    actions.append(h('button',{className:'btn-outline',title:'Run the export now and email the result to me only — does not save a schedule',onclick:doEmailMe},'📧 Email to me'));
     actions.append(h('button',{className:'btn-outline',title:'Open the scheduled-export builder pre-filled with the current source + selected columns',onclick:()=>{
       if (!selectedSource || selectedColumns.length === 0) return alert('Pick a source and columns first');
       showScheduledExportBuilder({
@@ -7671,6 +7672,59 @@ async function renderExports(main) {
       document.body.append(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (e) { alert(e.message); }
+  }
+
+  // "Email to me" — opens a small chooser then POSTs to /builder/email-me.
+  // The chooser is needed because the user hasn't told us which format(s)
+  // they want yet (Download buttons are format-explicit; this one isn't).
+  async function doEmailMe() {
+    if (!selectedSource || selectedColumns.length === 0) return alert('Select a source and columns');
+    const choice = await pickFormatsModal('Email export to me');
+    if (!choice) return; // cancelled
+    try {
+      const resp = await api('/exports/builder/email-me', { method: 'POST', body: JSON.stringify({
+        source: selectedSource,
+        columns: selectedColumns,
+        filters: {
+          start_date: readDateInput(startInput) || undefined,
+          end_date: readDateInput(endInput) || undefined,
+        },
+        formats: choice,
+      })});
+      alert(`Sent ${resp.delivered}/${resp.delivered + resp.failed} email(s) to ${resp.to} — ${resp.rowCount} row${resp.rowCount === 1 ? '' : 's'}.`);
+    } catch (e) { alert(e.message); }
+  }
+
+  // Small inline modal that resolves with the chosen ['csv','xlsx','pdf'] subset
+  // or null on cancel. Used by Email-to-me and Send-test-now flows.
+  function pickFormatsModal(title) {
+    return new Promise((resolve) => {
+      const overlay = h('div',{className:'modal-overlay'});
+      const modal = h('div',{className:'modal',style:'max-width:360px'});
+      modal.append(h('h3',{style:'margin-top:0'},title));
+      modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:10px'},
+        'Pick the attachment format(s) — one email per format.'));
+      const cbs = {};
+      [['csv','CSV'],['xlsx','Excel'],['pdf','PDF']].forEach(([k,lbl], idx) => {
+        const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:13px;padding:3px 0;cursor:pointer'});
+        const cb = h('input',{type:'checkbox',style:'width:auto'});
+        cb.checked = idx === 1; // Excel default
+        cbs[k] = cb;
+        row.append(cb); row.append(document.createTextNode(lbl));
+        modal.append(row);
+      });
+      const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:14px'});
+      actions.append(h('button',{className:'btn-outline',onclick:()=>{overlay.remove();resolve(null);}},'Cancel'));
+      actions.append(h('button',{className:'btn',onclick:()=>{
+        const picks = ['csv','xlsx','pdf'].filter(k => cbs[k].checked);
+        if (picks.length === 0) return alert('Pick at least one format');
+        overlay.remove();
+        resolve(picks);
+      }},'Send'));
+      modal.append(actions);
+      overlay.append(modal);
+      document.body.append(overlay);
+    });
   }
 
   // ── Schedule modal (create / edit a saved_export) ────────
@@ -8179,8 +8233,30 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
     document.createTextNode('Enabled (scheduled runs fire when checked; manual trigger always works)'),
   ]));
 
-  const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end'});
+  const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap'});
   actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+  // "Send test now" — runs an ad-hoc export with the current modal state
+  // and emails the result to the caller only. Bypasses Save so a user can
+  // sanity-check an export before committing the schedule. Honors the
+  // selected attachment-format checkboxes; if none are checked, falls
+  // back to xlsx (matches the create-default).
+  actions.append(h('button',{className:'btn-outline',title:'Run the export now with the current builder state and email it to me only',onclick:async()=>{
+    if (!chosenSource) return alert('Pick a data source');
+    if (chosenColumns.length === 0) return alert('Pick at least one column');
+    const picks = ['csv','xlsx','pdf'].filter(f => fmtBoxesBuilder[f] && fmtBoxesBuilder[f].checked);
+    const formatsToSend = picks.length > 0 ? picks : ['xlsx'];
+    try {
+      const resp = await api('/exports/builder/email-me', { method: 'POST', body: JSON.stringify({
+        source: chosenSource,
+        columns: chosenColumns,
+        filters: chosenFilters || {},
+        formats: formatsToSend,
+        email_subject: subjInp.value.trim() || undefined,
+        email_body_html: bodyTA.value.trim() || undefined,
+      })});
+      alert(`Sent ${resp.delivered}/${resp.delivered + resp.failed} email(s) to ${resp.to} — ${resp.rowCount} row${resp.rowCount === 1 ? '' : 's'}.`);
+    } catch (e) { alert(e.message); }
+  }},'Send test now'));
   actions.append(h('button',{className:'btn',onclick:async()=>{
     const name = nameInp.value.trim();
     if (!name) return alert('Name is required');
