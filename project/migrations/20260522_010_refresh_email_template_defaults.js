@@ -19,7 +19,7 @@ const TEMPLATES = [
     "key": "bid_project_quote",
     "name": "Quick Project — quote to PM",
     "subject": "Quote for {{project_name}} — {{bid_number}}",
-    "body_html": "<p>Hi {{pm_first_name}} —</p>\n<p>The Quick Project flow generated a quote for <strong>{{project_name}}</strong> ({{bid_number}}). The Word doc is attached.</p>\n<p>Total: <strong>{{quote_total}}</strong></p>\n<p style=\"color:#888;font-size:12px;margin-top:24px\">",
+    "body_html": "<p>Hi {{pm_first_name}} —</p>\n<p>The Quick Project flow generated a quote for <strong>{{project_name}}</strong> ({{bid_number}}). The Word doc is attached.</p>\n<p>Total: <strong>{{quote_total}}</strong></p>",
     "body_text": null,
     "variables": [
       {
@@ -53,7 +53,7 @@ const TEMPLATES = [
     "key": "email_day_to_staff",
     "name": "Scheduler — Email Day to Staff",
     "subject": "Schedule: {{project_number}} on {{date}}",
-    "body_html": "<p>You're on the crew for <strong>{{project_name}}</strong> ({{project_number}}) on <strong>{{date}}</strong>.</p>\n<p><strong>Location:</strong> {{{location.map_link}}}</p>\n<p><strong>Site Contact:</strong> {{site_contact.name}} — {{site_contact.phone}}</p>\n<p><strong>Crew ({{crew_count}}):</strong> {{crew_names}}</p>\n<p>{{day_notes}}</p>\n<p style=\"color:#888;font-size:12px;margin-top:24px\">Sent from ConstructPM.</p>",
+    "body_html": "<p>You're on the crew for <strong>{{project_name}}</strong> ({{project_number}}) on <strong>{{date}}</strong>.</p>\n<p><strong>Location:</strong> {{{location.map_link}}}</p>\n<p><strong>Site Contact:</strong> {{site_contact.name}} — {{site_contact.phone}}</p>\n<p><strong>Crew ({{crew_count}}):</strong> {{crew_names}}</p>\n<p>{{day_notes}}</p>",
     "body_text": "You're on the crew for {{project_name}} ({{project_number}}) on {{date}}.\nLocation: {{location}}\nCrew ({{crew_count}}): {{crew_names}}\n{{day_notes}}",
     "variables": [
       {
@@ -112,7 +112,7 @@ const TEMPLATES = [
     "key": "saved_export_email",
     "name": "Scheduled export — delivery email",
     "subject": "{{name}}",
-    "body_html": "<p>Hi —</p>\n<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>\n<p><strong>{{rowCount}}</strong> rows from the <code>{{source}}</code> source.</p>\n<p style=\"color:#888;font-size:12px;margin-top:24px\">",
+    "body_html": "<p>Hi —</p>\n<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC and the CSV is attached.</p>\n<p><strong>{{rowCount}}</strong> rows from the <code>{{source}}</code> source.</p>",
     "body_text": null,
     "variables": [
       {
@@ -141,7 +141,7 @@ const TEMPLATES = [
     "key": "ticket_ready_pickup",
     "name": "Equipment ticket — ready for pickup",
     "subject": "Ticket #{{ticket_number}} ready for pick-up",
-    "body_html": "<p>Hi —</p>\n<p>Equipment ticket <strong>#{{ticket_number}}</strong> for project <strong>{{project_number}}</strong> is ready for pick-up.</p>\n<ul>\n  <li>Pick-up person: {{pickup_person}}</li>\n  <li>Pick-up location: {{location}}</li>\n  <li>Flagged ready by: {{created_by_name}}</li>\n</ul>\n<p style=\"margin-top:18px\"><strong>Equipment requested</strong></p>\n{{{equipment_table_html}}}\n<p style=\"color:#888;font-size:12px;margin-top:24px\">",
+    "body_html": "<p>Hi —</p>\n<p>Equipment ticket <strong>#{{ticket_number}}</strong> for project <strong>{{project_number}}</strong> is ready for pick-up.</p>\n<ul>\n  <li>Pick-up person: {{pickup_person}}</li>\n  <li>Pick-up location: {{location}}</li>\n  <li>Flagged ready by: {{created_by_name}}</li>\n</ul>\n<p style=\"margin-top:18px\"><strong>Equipment requested</strong></p>\n{{{equipment_table_html}}}",
     "body_text": null,
     "variables": [
       {
