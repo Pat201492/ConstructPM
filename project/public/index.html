@@ -160,6 +160,16 @@ async function api(path, opts={}) {
   const r = await fetch('/api'+path, {...opts, headers:{...h,...(opts.headers||{})}});
   if (r.status === 401) { logout(); return null; }
   const data = await r.json();
+  // Server-side first-login gate (PR #28 authenticate middleware) 403s
+  // every non-/auth/* call until the user resets their password. Route
+  // them to the forced-reset screen instead of bubbling a confusing
+  // alert — happens for users whose session pre-dates the migration
+  // that set must_change_password=true on existing rows.
+  if (r.status === 403 && data && data.must_change_password) {
+    if (S.user) S.user.must_change_password = true;
+    navigate('force-change-password');
+    throw new Error('Password change required');
+  }
   if (!r.ok) throw new Error(data.error || data.message || 'API error');
   return data;
 }

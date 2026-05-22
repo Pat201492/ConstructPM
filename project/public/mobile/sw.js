@@ -7,7 +7,11 @@
 //     bundle is picked up on the next launch.
 // Push notifications are deferred to v2 — no push event handler here.
 
-const CACHE = 'cpm-mobile-v1';
+// Bump on any shell change so installed PWAs evict stale styles.css /
+// app.js / scan.js on next launch. v2: corner-bracket scanner target +
+// auto-torch (PR #30) — users on v1 were seeing the old plain reticle
+// and no flashlight because the SW kept serving cached shell forever.
+const CACHE = 'cpm-mobile-v2';
 const APP_SHELL = [
   '/mobile/',
   '/mobile/index.html',
