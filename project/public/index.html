@@ -7236,15 +7236,18 @@ async function tablesContacts(c) {
 // ═══════════════════════════════════════════════════════════
 // DATA EXPORT (cross-table query builder)
 // ═══════════════════════════════════════════════════════════
+// Sources to suppress in the Data Export picker AND in the scheduled-export
+// builder. The backend still exposes them; the UI hides them so the two
+// surfaces stay in sync.
+const HIDDEN_EXPORT_SOURCES = new Set(['timesheets']);
+function filterExportSources(srcMap) {
+  return Object.fromEntries(Object.entries(srcMap).filter(([k]) => !HIDDEN_EXPORT_SOURCES.has(k)));
+}
+
 async function renderExports(main) {
   main.append(h('div',{className:'page-header'},[h('h1',{},'Data Export')]));
 
-  const rawSources = await api('/exports/builder/sources');
-  // Timesheets table is intentionally hidden from the picker — the feature
-  // isn't surfaced anywhere else in the UI yet and exposing it here invites
-  // a half-broken export. Invoice / purchase-order tables are kept because
-  // they still hold useful columns even though their primary tabs are off.
-  const sources = Object.fromEntries(Object.entries(rawSources).filter(([k]) => k !== 'timesheets'));
+  const sources = filterExportSources(await api('/exports/builder/sources'));
 
   // ── State (column-picker) ────────────────────────────────
   let selectedSource = null;
@@ -7354,7 +7357,7 @@ async function renderExports(main) {
     }
     if (schedules.length === 0) {
       card.append(h('p',{style:'color:var(--text3);font-size:12px;margin:6px 0'},
-        'No saved exports yet. Click "+ Create scheduled export" above (or build a config below and click "Save as scheduled export").'));
+        'No saved exports yet. Click "+ Create scheduled export" above to start.'));
     } else {
       const rows = schedules.map(s => [
         h('span',{style: s.enabled ? '' : 'opacity:0.5'}, s.name),
@@ -8001,13 +8004,19 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
     const H = isNaN(hhN) ? 0 : hhN;
     const M = isNaN(mmN) ? 0 : mmN;
     if (freqMode === 'daily')   return M + ' ' + H + ' * * *';
-    if (freqMode === 'weekly')  return M + ' ' + H + ' * * ' + (dows.length ? dows.join(',') : '*');
+    // Weekly with no day picked is not a valid cron — returning a star-DOW
+    // string would silently compile as daily. Surface as null so both the
+    // preview and the submit guard treat it as incomplete.
+    if (freqMode === 'weekly')  return dows.length ? (M + ' ' + H + ' * * ' + dows.join(',')) : null;
     if (freqMode === 'monthly') return M + ' ' + H + ' ' + dom + ' * *';
     return null;
   }
   function updateCronPreview() {
     const c = computedCron();
-    cronPreview.textContent = c ? ('Cron → ' + c) : 'Cron → (manual — fires only when triggered)';
+    if (c) cronPreview.textContent = 'Cron → ' + c;
+    else if (freqMode === 'weekly' && dows.length === 0) cronPreview.textContent = 'Cron → (pick at least one day of the week)';
+    else if (freqMode === 'custom' && !customCron) cronPreview.textContent = 'Cron → (enter a cron expression)';
+    else cronPreview.textContent = 'Cron → (manual — fires only when triggered)';
     weeklyRow.style.display  = freqMode === 'weekly'  ? '' : 'none';
     monthlyRow.style.display = freqMode === 'monthly' ? '' : 'none';
     timeRow.style.display    = (freqMode === 'daily' || freqMode === 'weekly' || freqMode === 'monthly') ? '' : 'none';
@@ -8117,10 +8126,8 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
 
   // Load sources (timesheets-filtered to match Data Export tab).
   (async () => {
-    try {
-      const raw = await api('/exports/builder/sources');
-      sources = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== 'timesheets'));
-    } catch { sources = {}; }
+    try { sources = filterExportSources(await api('/exports/builder/sources')); }
+    catch { sources = {}; }
     srcSel.innerHTML = '';
     srcSel.append(h('option',{value:''},'Choose source...'));
     Object.entries(sources).forEach(([k,s]) => srcSel.append(h('option',{value:k}, s.label)));
