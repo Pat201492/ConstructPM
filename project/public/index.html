@@ -7940,8 +7940,15 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
   let customCron = parsed.raw || '';
 
   const modeSel = h('select',{style:'width:180px'});
-  [['manual','Manual only'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly'],['custom','Custom (cron)']].forEach(([v,l]) =>
-    modeSel.append(h('option',{value:v}, l)));
+  const MODE_CHOICES = [['manual','Manual only'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']];
+  MODE_CHOICES.forEach(([v,l]) => modeSel.append(h('option',{value:v}, l)));
+  // Legacy rows whose cron expression doesn't map to manual/daily/weekly/monthly
+  // (e.g. `*/5 * * * *` or weekday ranges) round-trip as freqMode='custom'.
+  // Show the option only when it's already in use so the picker stays simple
+  // for the common case but the existing row stays editable.
+  if (freqMode === 'custom') {
+    modeSel.append(h('option',{value:'custom'},'Custom (cron) — legacy'));
+  }
   modeSel.value = freqMode;
   freqWrap.append(seRowLbl('Repeats', modeSel));
 
