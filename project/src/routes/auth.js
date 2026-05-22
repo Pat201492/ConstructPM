@@ -505,7 +505,11 @@ router.get('/dev-users', async (req, res) => {
       .orderBy('first_name');
     res.json({ users });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // Log the real error server-side but return a generic message so
+    // the response doesn't leak DB or stack details. Matches the
+    // pattern used by /dev-login earlier in this file.
+    console.error('[/dev-users] error:', err.message);
+    res.status(500).json({ error: 'Dev user list unavailable' });
   }
 });
 

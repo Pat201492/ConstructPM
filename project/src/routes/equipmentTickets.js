@@ -325,6 +325,12 @@ router.post('/:ticketNumber/ready-for-pickup', authorize('equipment:read'), asyn
         project_id: project.project_id,
         project_number: project.project_number,
         pickup_person: project.pickup_person,
+        // pickup_person_id is the FK to users(id). Carry it in the
+        // payload so a deferred email-worker can resolve the pickup
+        // user's email (mirrors notifyTicketReady's inline lookup at
+        // POST /:ticketNumber/ready). Without it, a future worker
+        // reading these rows could only email the project PM.
+        pickup_person_id: project.pickup_person_id || null,
         requestor_name: project.requestor_name,
       }),
       created_by: req.user.id,
