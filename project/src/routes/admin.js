@@ -645,11 +645,17 @@ const ALL_TABS = [
   { id: 'admin', label: 'Admin' },
 ];
 
-// Tab → feature flag mapping (mirrors public/index.html:1078-1085).
+// Tab → feature flag mapping. Value can be a string (single flag) OR an
+// array (tab is reachable if ANY listed flag is on). The grouped
+// `financials` tab routes to the invoices page but conditionally
+// renders both invoice and PO sections — hide it only when BOTH
+// features are off. Mirrors the client's per-section feature gates at
+// public/index.html:2647 (invoices) and :2752 (POs).
+//
 // Tabs not in this map are always shown. Default-on semantics: a
 // missing flag row in global_variables means the feature is enabled.
 const TAB_FEATURE_MAP = {
-  financials: 'invoices_enabled',
+  financials: ['invoices_enabled', 'purchase_orders_enabled'],
   inbox: 'inbox_enabled',
   timesheets: 'timesheets_enabled',
   'oil-samples': 'oil_samples_enabled',
@@ -665,11 +671,14 @@ async function getAvailableTabs() {
   const rows = await db('global_variables').where('key', 'like', 'feature.%');
   const enabled = {};
   rows.forEach(r => { enabled[r.key.replace(/^feature\./, '')] = r.value === 'true'; });
+  // Default-on: a flag with no row counts as enabled (matches the
+  // client's featureEnabled() at public/index.html:153).
+  const isOn = (flag) => enabled[flag] === undefined ? true : enabled[flag];
   return ALL_TABS.filter(tab => {
-    const flag = TAB_FEATURE_MAP[tab.id];
-    if (!flag) return true;
-    if (enabled[flag] === undefined) return true; // default-on
-    return enabled[flag];
+    const spec = TAB_FEATURE_MAP[tab.id];
+    if (!spec) return true;
+    if (Array.isArray(spec)) return spec.some(isOn); // any-on: tab survives while at least one section renders
+    return isOn(spec);
   });
 }
 
