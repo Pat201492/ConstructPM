@@ -7236,10 +7236,18 @@ async function tablesContacts(c) {
 // ═══════════════════════════════════════════════════════════
 // DATA EXPORT (cross-table query builder)
 // ═══════════════════════════════════════════════════════════
+// Sources to suppress in the Data Export picker AND in the scheduled-export
+// builder. The backend still exposes them; the UI hides them so the two
+// surfaces stay in sync.
+const HIDDEN_EXPORT_SOURCES = new Set(['timesheets']);
+function filterExportSources(srcMap) {
+  return Object.fromEntries(Object.entries(srcMap).filter(([k]) => !HIDDEN_EXPORT_SOURCES.has(k)));
+}
+
 async function renderExports(main) {
   main.append(h('div',{className:'page-header'},[h('h1',{},'Data Export')]));
 
-  const sources = await api('/exports/builder/sources');
+  const sources = filterExportSources(await api('/exports/builder/sources'));
 
   // ── State (column-picker) ────────────────────────────────
   let selectedSource = null;
@@ -7306,7 +7314,16 @@ async function renderExports(main) {
         }),
       });
     }},'▶'));
-    wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:'Edit',onclick:()=>showScheduleModal({mode:'edit',existing:s,onSaved:refresh})},'✎'));
+    wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:'Edit',onclick:()=>{
+      // Rows with per-user fan-out keep the older, wider modal so their
+      // extra config (role / filter column / admin recipients / formats)
+      // stays editable. The simple builder is used for the common case.
+      if (s.fanout_mode === 'per_user_role') {
+        showScheduleModal({ mode:'edit', existing:s, onSaved:refresh });
+      } else {
+        showScheduledExportBuilder({ mode:'edit', existing:s, onSaved:refresh });
+      }
+    }},'✎'));
     wrap.append(h('button',{className:'btn-outline btn-sm',style:'padding:2px 8px',title:s.enabled?'Pause':'Resume',onclick:async()=>{
       try { await api('/exports/schedules/'+s.id,{method:'PATCH',body:JSON.stringify({enabled:!s.enabled})}); refresh(); }
       catch (e) { alert(e.message); }
@@ -7322,10 +7339,15 @@ async function renderExports(main) {
   async function loadAndRenderSchedules() {
     scheduledContainer.innerHTML = '';
     const card = h('div',{style:'background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px'});
-    card.append(h('div',{style:'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px'},[
+    const header = h('div',{style:'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap'});
+    header.append(h('div',{},[
       h('div',{style:'font-size:14px;font-weight:700'},'Saved & Scheduled Exports'),
-      h('span',{style:'font-size:11px;color:var(--text3)'},'Auto-emailed on schedule, or trigger anytime'),
+      h('div',{style:'font-size:11px;color:var(--text3)'},'Auto-emailed on schedule, or trigger anytime'),
     ]));
+    header.append(h('button',{className:'btn',style:'padding:6px 12px',onclick:()=>{
+      showScheduledExportBuilder({ mode:'create', onSaved: loadAndRenderSchedules });
+    }},'+ Create scheduled export'));
+    card.append(header);
     let schedules = [];
     try { const r = await api('/exports/schedules'); schedules = r.schedules || []; }
     catch (e) {
@@ -7335,7 +7357,7 @@ async function renderExports(main) {
     }
     if (schedules.length === 0) {
       card.append(h('p',{style:'color:var(--text3);font-size:12px;margin:6px 0'},
-        'No saved exports yet. Build a config below and click "Save current config".'));
+        'No saved exports yet. Click "+ Create scheduled export" above to start.'));
     } else {
       const rows = schedules.map(s => [
         h('span',{style: s.enabled ? '' : 'opacity:0.5'}, s.name),
@@ -7453,23 +7475,19 @@ async function renderExports(main) {
     const actions = h('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'});
     actions.append(h('button',{className:'btn',onclick:doDownload},'Download CSV'));
     actions.append(h('button',{className:'btn-outline',onclick:doPreview},'Preview'));
-    actions.append(h('button',{className:'btn-outline',title:'Save this source + selected columns as a recurring or on-demand emailed export',onclick:()=>{
+    actions.append(h('button',{className:'btn-outline',title:'Open the scheduled-export builder pre-filled with the current source + selected columns',onclick:()=>{
       if (!selectedSource || selectedColumns.length === 0) return alert('Pick a source and columns first');
-      showScheduleModal({
+      showScheduledExportBuilder({
         mode: 'create',
-        prefill: {
-          source: selectedSource,
-          columns: selectedColumns.slice(),
-          filters: {
-            start_date: readDateInput(startInput) || undefined,
-            end_date: readDateInput(endInput) || undefined,
-          },
-          enabled: true,
-          recipients: (S.user && S.user.id) ? [S.user.id] : [],
+        prefillSource: selectedSource,
+        prefillColumns: selectedColumns.slice(),
+        prefillFilters: {
+          start_date: readDateInput(startInput) || undefined,
+          end_date: readDateInput(endInput) || undefined,
         },
         onSaved: loadAndRenderSchedules,
       });
-    }},'Save current config'));
+    }},'Save as scheduled export'));
     actions.append(h('button',{className:'btn-outline',style:'margin-left:auto',onclick:()=>{
       selectedColumns = [];
       $$('#exp-left input.exp-col').forEach(cb=>{cb.checked=false;});
@@ -7720,7 +7738,7 @@ async function renderExports(main) {
     emailFold.append(h('summary',{style:'cursor:pointer;font-size:12px;font-weight:600'},'Email subject + body (optional)'));
     emailFold.append(h('p',{style:'color:var(--text2);font-size:11px;margin:6px 0 8px'},
       'Customise the delivery email for this export. {{name}}, {{source}}, {{rowCount}}, {{whenUtc}} are substituted at send time. Leave blank to use the system default.'));
-    const emailSubj = h('input',{type:'text',value:initial.email_subject||'',placeholder:'[ConstructPM] {{name}}',
+    const emailSubj = h('input',{type:'text',value:initial.email_subject||'',placeholder:'Scheduled export — {{name}}',
       style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px;margin-bottom:6px'});
     const emailBody = h('textarea',{
       style:'width:100%;min-height:120px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
@@ -7889,6 +7907,374 @@ async function renderExports(main) {
 
   renderLeft();
   renderRight();
+}
+
+// ═══════════════════════════════════════════════════════════
+// SCHEDULED EXPORT BUILDER (3-section modal)
+// ═══════════════════════════════════════════════════════════
+// Self-contained modal: frequency + source/columns + email.
+// Replaces the older showScheduleModal entry points for create + edit.
+// The old modal stays alive so existing fan-out (per-user-role) schedules
+// can still be edited with the wider feature set; this builder is the
+// default and covers the common static-recipient case.
+function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColumns, prefillFilters, onSaved }) {
+  const initial = existing || {};
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:760px;max-height:92vh;overflow-y:auto'});
+  modal.append(h('h2',{},(mode === 'edit' ? 'Edit' : 'Create') + ' Scheduled Export'));
+
+  // ── Name ───────────────────────────────────────────────────
+  modal.append(seLabel('Name'));
+  const nameInp = h('input',{type:'text',placeholder:'e.g. Weekly P&L',value:initial.name||'',style:'width:100%;margin-bottom:14px'});
+  modal.append(nameInp);
+
+  // ── Section 1: Frequency ──────────────────────────────────
+  modal.append(seHeader('1. Frequency'));
+  const freqWrap = h('div',{style:'background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:14px'});
+
+  const parsed = parseCronToFrequency(initial.cron || null);
+  let freqMode = parsed.mode;
+  let dows = parsed.dows ? parsed.dows.slice() : [];
+  let dom = parsed.dom || 1;
+  let timeVal = parsed.time || '08:00';
+  let customCron = parsed.raw || '';
+
+  const modeSel = h('select',{style:'width:180px'});
+  [['manual','Manual only'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly'],['custom','Custom (cron)']].forEach(([v,l]) =>
+    modeSel.append(h('option',{value:v}, l)));
+  modeSel.value = freqMode;
+  freqWrap.append(seRowLbl('Repeats', modeSel));
+
+  // Weekly day-of-week chips
+  const weeklyRow = h('div',{style:'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px'});
+  const dowLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dowChips = dowLabels.map((lbl, i) => h('button',{
+    type:'button', className:'btn-outline btn-sm',
+    style:'padding:3px 10px;font-size:11px',
+    onclick: () => {
+      const ix = dows.indexOf(i);
+      if (ix === -1) dows.push(i); else dows.splice(ix,1);
+      dows.sort();
+      updateDowChips();
+      updateCronPreview();
+    },
+  }, lbl));
+  function updateDowChips() {
+    dowChips.forEach((c,i)=>{
+      const on = dows.includes(i);
+      c.style.background = on ? 'var(--primary)' : '';
+      c.style.color = on ? '#fff' : '';
+    });
+  }
+  dowChips.forEach(c => weeklyRow.append(c));
+
+  // Monthly day-of-month
+  const monthlyRow = h('div',{style:'margin-top:8px'});
+  const domInp = h('input',{type:'number',min:'1',max:'31',value:String(dom),style:'width:80px'});
+  domInp.oninput = () => { dom = Math.max(1, Math.min(31, parseInt(domInp.value,10) || 1)); updateCronPreview(); };
+  monthlyRow.append(seRowLbl('Day of month (1–31)', domInp));
+
+  // Time-of-day
+  const timeRow = h('div',{style:'margin-top:8px'});
+  const timeInp = h('input',{type:'time',value:timeVal,style:'width:140px'});
+  timeInp.oninput = () => { timeVal = timeInp.value || '00:00'; updateCronPreview(); };
+  timeRow.append(seRowLbl('Time of day (UTC)', timeInp));
+
+  // Custom cron
+  const customRow = h('div',{style:'margin-top:8px'});
+  customRow.append(h('label',{style:'display:block;font-size:11px;color:var(--text2);margin-bottom:2px'},'Cron expression (5 fields, UTC)'));
+  const customInp = h('input',{type:'text',value:customCron,placeholder:'e.g. 0 8 * * 1-5',
+    style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px'});
+  customInp.oninput = () => { customCron = customInp.value.trim(); updateCronPreview(); };
+  customRow.append(customInp);
+
+  freqWrap.append(weeklyRow);
+  freqWrap.append(monthlyRow);
+  freqWrap.append(timeRow);
+  freqWrap.append(customRow);
+
+  const cronPreview = h('div',{style:'margin-top:10px;padding:6px 10px;background:var(--bg3);border-radius:4px;font-size:12px;font-family:JetBrains Mono,monospace'});
+  freqWrap.append(cronPreview);
+
+  function computedCron() {
+    if (freqMode === 'manual') return null;
+    if (freqMode === 'custom') return customCron || null;
+    const [hhStr, mmStr] = (timeVal || '00:00').split(':');
+    const hhN = parseInt(hhStr, 10); const mmN = parseInt(mmStr, 10);
+    const H = isNaN(hhN) ? 0 : hhN;
+    const M = isNaN(mmN) ? 0 : mmN;
+    if (freqMode === 'daily')   return M + ' ' + H + ' * * *';
+    // Weekly with no day picked is not a valid cron — returning a star-DOW
+    // string would silently compile as daily. Surface as null so both the
+    // preview and the submit guard treat it as incomplete.
+    if (freqMode === 'weekly')  return dows.length ? (M + ' ' + H + ' * * ' + dows.join(',')) : null;
+    if (freqMode === 'monthly') return M + ' ' + H + ' ' + dom + ' * *';
+    return null;
+  }
+  function updateCronPreview() {
+    const c = computedCron();
+    if (c) cronPreview.textContent = 'Cron → ' + c;
+    else if (freqMode === 'weekly' && dows.length === 0) cronPreview.textContent = 'Cron → (pick at least one day of the week)';
+    else if (freqMode === 'custom' && !customCron) cronPreview.textContent = 'Cron → (enter a cron expression)';
+    else cronPreview.textContent = 'Cron → (manual — fires only when triggered)';
+    weeklyRow.style.display  = freqMode === 'weekly'  ? '' : 'none';
+    monthlyRow.style.display = freqMode === 'monthly' ? '' : 'none';
+    timeRow.style.display    = (freqMode === 'daily' || freqMode === 'weekly' || freqMode === 'monthly') ? '' : 'none';
+    customRow.style.display  = freqMode === 'custom'  ? '' : 'none';
+  }
+  modeSel.onchange = () => { freqMode = modeSel.value; updateCronPreview(); };
+  updateDowChips();
+  updateCronPreview();
+  modal.append(freqWrap);
+
+  // ── Section 2: Source + columns ───────────────────────────
+  modal.append(seHeader('2. Data source & columns'));
+  const dataWrap = h('div',{style:'background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:14px'});
+
+  let sources = {};
+  let chosenSource = initial.source || prefillSource || '';
+  let chosenColumns = (initial.columns && initial.columns.length)
+    ? initial.columns.slice()
+    : (prefillColumns ? prefillColumns.slice() : []);
+  const chosenFilters = initial.filters || prefillFilters || {};
+
+  const srcSel = h('select',{style:'width:300px'});
+  srcSel.append(h('option',{value:''},'Choose source...'));
+  dataWrap.append(seRowLbl('Source', srcSel));
+
+  const colsLayout = h('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px'});
+  const availPanel = h('div',{style:'background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px;max-height:280px;overflow-y:auto'});
+  const selPanel = h('div',{style:'background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px;max-height:280px;overflow-y:auto'});
+  colsLayout.append(h('div',{},[
+    h('div',{style:'font-size:11px;color:var(--text2);margin-bottom:4px'},'Available columns'),
+    availPanel,
+  ]));
+  colsLayout.append(h('div',{},[
+    h('div',{style:'font-size:11px;color:var(--text2);margin-bottom:4px'},'Selected (CSV order — use ↑/↓ to reorder)'),
+    selPanel,
+  ]));
+  dataWrap.append(colsLayout);
+  modal.append(dataWrap);
+
+  function findColMeta(key) {
+    const src = sources[chosenSource];
+    if (!src) return { group:'', label:key };
+    for (const g of src.groups) {
+      const c = g.columns.find(x => x.key === key);
+      if (c) return { group: g.group, label: c.label };
+    }
+    return { group:'', label:key };
+  }
+
+  function renderAvailable() {
+    availPanel.innerHTML = '';
+    const src = sources[chosenSource];
+    if (!src) { availPanel.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'Pick a source above.')); return; }
+    src.groups.forEach(g => {
+      const card = h('div',{style:'border-bottom:1px solid var(--border);padding:4px 0;margin-bottom:2px'});
+      card.append(h('div',{style:'font-weight:700;font-size:11px;color:var(--primary);margin-bottom:3px'}, g.group));
+      g.columns.forEach(c => {
+        const row = h('label',{style:'display:flex;align-items:center;gap:5px;font-size:11px;padding:1px 0;cursor:pointer'});
+        const cb = h('input',{type:'checkbox',style:'width:auto'});
+        cb.checked = chosenColumns.includes(c.key);
+        cb.onchange = () => {
+          if (cb.checked && !chosenColumns.includes(c.key)) chosenColumns.push(c.key);
+          else if (!cb.checked) { const ix = chosenColumns.indexOf(c.key); if (ix !== -1) chosenColumns.splice(ix,1); }
+          renderSelected();
+        };
+        row.append(cb); row.append(document.createTextNode(c.label));
+        card.append(row);
+      });
+      availPanel.append(card);
+    });
+  }
+
+  function renderSelected() {
+    selPanel.innerHTML = '';
+    if (chosenColumns.length === 0) {
+      selPanel.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No columns selected.'));
+      return;
+    }
+    chosenColumns.forEach((k, idx) => {
+      const meta = findColMeta(k);
+      const row = h('div',{style:'display:flex;align-items:center;gap:4px;padding:3px 6px;margin-bottom:2px;background:var(--bg3);border-radius:3px;font-size:11px'});
+      row.append(h('span',{style:'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},
+        (meta.group ? meta.group + ' · ' : '') + meta.label));
+      row.append(h('button',{type:'button',className:'btn-outline btn-sm',style:'padding:0 6px;font-size:11px',onclick:()=>{
+        if (idx === 0) return;
+        const tmp = chosenColumns[idx-1]; chosenColumns[idx-1] = chosenColumns[idx]; chosenColumns[idx] = tmp;
+        renderSelected();
+      }},'↑'));
+      row.append(h('button',{type:'button',className:'btn-outline btn-sm',style:'padding:0 6px;font-size:11px',onclick:()=>{
+        if (idx === chosenColumns.length - 1) return;
+        const tmp = chosenColumns[idx+1]; chosenColumns[idx+1] = chosenColumns[idx]; chosenColumns[idx] = tmp;
+        renderSelected();
+      }},'↓'));
+      row.append(h('button',{type:'button',className:'btn-red btn-sm',style:'padding:0 6px;font-size:11px',onclick:()=>{
+        chosenColumns.splice(idx, 1);
+        renderAvailable(); renderSelected();
+      }},'×'));
+      selPanel.append(row);
+    });
+  }
+
+  srcSel.onchange = () => {
+    chosenSource = srcSel.value;
+    chosenColumns = [];
+    renderAvailable(); renderSelected();
+  };
+
+  // Load sources (timesheets-filtered to match Data Export tab).
+  (async () => {
+    try { sources = filterExportSources(await api('/exports/builder/sources')); }
+    catch { sources = {}; }
+    srcSel.innerHTML = '';
+    srcSel.append(h('option',{value:''},'Choose source...'));
+    Object.entries(sources).forEach(([k,s]) => srcSel.append(h('option',{value:k}, s.label)));
+    if (chosenSource && sources[chosenSource]) srcSel.value = chosenSource;
+    renderAvailable(); renderSelected();
+  })();
+
+  // ── Section 3: Email ──────────────────────────────────────
+  modal.append(seHeader('3. Email'));
+  const emailWrap = h('div',{style:'background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:14px'});
+
+  emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'},
+    'Recipients (static — pick from active users with email)'));
+  const recipsContainer = h('div',{style:'max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
+  emailWrap.append(recipsContainer);
+  const selectedRecipients = new Set(initial.recipients || []);
+  (async () => {
+    try {
+      const r = await api('/users/email-picker');
+      const users = r.users || [];
+      recipsContainer.innerHTML = '';
+      if (users.length === 0) {
+        recipsContainer.append(h('p',{style:'color:var(--text3);font-size:12px;margin:4px'},'No active users with email on file.'));
+        return;
+      }
+      users.forEach(u => {
+        const row = h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer'});
+        const cb = h('input',{type:'checkbox',style:'width:auto'});
+        cb.checked = selectedRecipients.has(u.id);
+        cb.onchange = () => { if (cb.checked) selectedRecipients.add(u.id); else selectedRecipients.delete(u.id); };
+        row.append(cb);
+        row.append(document.createTextNode(u.first_name + ' ' + u.last_name + ' <' + u.email + '>'));
+        recipsContainer.append(row);
+      });
+    } catch {}
+  })();
+
+  emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Subject'));
+  const subjInp = h('input',{type:'text',value:initial.email_subject||'',
+    placeholder:'Scheduled export — {{name}}',
+    style:'width:100%;font-family:JetBrains Mono,monospace;font-size:12px'});
+  emailWrap.append(subjInp);
+
+  emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Body (HTML)'));
+  const bodyTA = h('textarea',{
+    style:'width:100%;min-height:140px;font-family:JetBrains Mono,monospace;font-size:11px;padding:6px;resize:vertical',
+    placeholder:'<p>Your scheduled ConstructPM export <strong>{{name}}</strong> ran at {{whenUtc}} UTC. CSV attached.</p>',
+  });
+  bodyTA.value = initial.email_body_html || '';
+  emailWrap.append(bodyTA);
+
+  emailWrap.append(h('p',{style:'color:var(--text3);font-size:11px;margin:6px 0 0'},
+    'Variables resolved at send time: {{name}}, {{source}}, {{rowCount}}, {{whenUtc}}. Leave subject/body blank to use the system default.'));
+
+  modal.append(emailWrap);
+
+  // ── Enabled toggle + actions ──────────────────────────────
+  const enabledCb = h('input',{type:'checkbox',style:'width:auto'});
+  enabledCb.checked = initial.enabled !== false;
+  modal.append(h('label',{style:'display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:14px;cursor:pointer'},[
+    enabledCb,
+    document.createTextNode('Enabled (scheduled runs fire when checked; manual trigger always works)'),
+  ]));
+
+  const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end'});
+  actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+  actions.append(h('button',{className:'btn',onclick:async()=>{
+    const name = nameInp.value.trim();
+    if (!name) return alert('Name is required');
+    if (!chosenSource) return alert('Pick a data source');
+    if (chosenColumns.length === 0) return alert('Pick at least one column');
+    if (freqMode === 'weekly' && dows.length === 0) return alert('Pick at least one day of the week (or switch to Manual)');
+    if (freqMode === 'custom' && !customCron) return alert('Enter a cron expression (or switch to Manual)');
+
+    const payload = {
+      name,
+      source: chosenSource,
+      columns: chosenColumns,
+      filters: chosenFilters || {},
+      cron: computedCron(),
+      recipients: [...selectedRecipients],
+      enabled: enabledCb.checked,
+      email_subject: subjInp.value.trim() || null,
+      email_body_html: bodyTA.value.trim() || null,
+      email_body_text: null,
+    };
+    // On create, force the simple (no-fanout) path so the row matches the
+    // shape the builder UI represents. On edit, leave fan-out fields alone
+    // so a row originally built in the older modal isn't silently rewritten.
+    if (mode !== 'edit') {
+      payload.fanout_mode = 'none';
+      payload.export_formats = ['csv'];
+    }
+    try {
+      if (mode === 'edit') {
+        await api('/exports/schedules/' + existing.id, { method:'PATCH', body: JSON.stringify(payload) });
+      } else {
+        await api('/exports/schedules', { method:'POST', body: JSON.stringify(payload) });
+      }
+      overlay.remove();
+      if (onSaved) onSaved();
+    } catch (e) { alert(e.message); }
+  }}, mode === 'edit' ? 'Save Changes' : 'Create Schedule'));
+  modal.append(actions);
+
+  overlay.append(modal);
+  document.body.append(overlay);
+
+  // Local DOM helpers (kept inside the function to avoid name collisions).
+  function seHeader(text) {
+    return h('div',{style:'font-size:13px;font-weight:700;color:var(--primary);margin:6px 0 4px'}, text);
+  }
+  function seLabel(text) {
+    return h('label',{style:'display:block;font-size:12px;color:var(--text2);margin-bottom:2px'}, text);
+  }
+  function seRowLbl(label, control) {
+    return h('div',{style:'display:flex;align-items:center;gap:10px;margin-top:4px'},[
+      h('span',{style:'font-size:12px;color:var(--text2);min-width:160px'}, label),
+      control,
+    ]);
+  }
+}
+
+// Cron → frequency UI fields. Returns one of:
+//   { mode: 'manual', time }
+//   { mode: 'daily', time }
+//   { mode: 'weekly', dows: [0..6], time }
+//   { mode: 'monthly', dom: 1..31, time }
+//   { mode: 'custom', raw: <string>, time }
+// Anything outside the M H * * * / M H * * dow / M H dom * * shape falls
+// through to 'custom' so the user can edit the raw cron without losing it.
+function parseCronToFrequency(cron) {
+  if (!cron || typeof cron !== 'string') return { mode: 'manual', time: '08:00' };
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return { mode: 'custom', raw: cron, time: '08:00' };
+  const [mm, hh, dom, mon, dow] = parts;
+  const isInt = (s) => /^\d+$/.test(s);
+  const time = (isInt(hh) && isInt(mm))
+    ? (String(parseInt(hh,10)).padStart(2,'0') + ':' + String(parseInt(mm,10)).padStart(2,'0'))
+    : '08:00';
+  if (!isInt(mm) || !isInt(hh) || mon !== '*') return { mode: 'custom', raw: cron, time };
+  if (dom === '*' && dow === '*') return { mode: 'daily', time };
+  if (dom === '*' && /^[0-6](,[0-6])*$/.test(dow)) {
+    return { mode: 'weekly', time, dows: dow.split(',').map(Number) };
+  }
+  if (isInt(dom) && dow === '*') return { mode: 'monthly', time, dom: parseInt(dom,10) };
+  return { mode: 'custom', raw: cron, time };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -9750,7 +10136,11 @@ async function adminEmailTemplates(c) {
   let templates = [];
   try {
     const r = await api('/admin/email-templates');
-    templates = r.templates || [];
+    // saved_export_email is edited inline on each Scheduled Export in the
+    // Data Export tab (subject + body live on the saved_exports row, not
+    // the global template). Hiding it here removes the duplicate editor
+    // surface — the underlying template row still exists as a fallback.
+    templates = (r.templates || []).filter(t => t.key !== 'saved_export_email');
   } catch (e) {
     c.append(h('div',{style:'color:var(--red)'}, 'Failed to load templates: ' + e.message));
     return;
