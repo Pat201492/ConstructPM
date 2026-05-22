@@ -10,6 +10,7 @@
 // never download PM screens (and vice versa).
 
 import { session, bootSession, login, logout, profile } from './lib/auth.js';
+import { api } from './lib/api.js';
 
 const app = document.getElementById('app');
 
@@ -27,16 +28,22 @@ export function toast(msg, kind = '') {
 // ── routes ──────────────────────────────────────────────────────
 // Each entry: { path, title, profile, loader }.
 // `loader` returns a Promise<{ mount(root, ctx) }>.
+// Notifications is shared — registered under both pm and shop so each
+// profile's shell can resolve it. buildTabbar() dedupes for admin so the
+// bell only appears once.
+const NOTIFICATIONS_ROUTE = { path: 'notifications', title: 'Inbox', loader: () => import('./shell/notifications.js') };
 const ROUTES = {
   pm: [
     { path: 'quick-bid',          title: 'Quick Bid',        loader: () => import('./pm/quick-bid.js') },
     { path: 'equipment-request',  title: 'New Ticket',       loader: () => import('./pm/equipment-request.js') },
+    NOTIFICATIONS_ROUTE,
   ],
   shop: [
     { path: 'active-tickets',     title: 'Active Tickets',   loader: () => import('./shop/active-tickets.js') },
     { path: 'maintenance',        title: 'Maintenance',      loader: () => import('./shop/maintenance.js') },
     { path: 'scan-to-shop',       title: 'Scan to Shop',     loader: () => import('./shop/scan-to-shop.js') },
     { path: 'equipment-entry',    title: 'New Equipment',    loader: () => import('./shop/equipment-entry.js') },
+    NOTIFICATIONS_ROUTE,
   ],
 };
 
@@ -48,7 +55,14 @@ const TAB_ICONS = {
   'maintenance':       '🔧',
   'scan-to-shop':      '🏭',
   'equipment-entry':   '➕',
+  'notifications':     '🔔',
 };
+
+// Global unread-count tracker. Polled every 60s (shorter when the bell
+// screen itself is open — it has its own 30s poll). Used by buildTabbar
+// to render a badge on the bell tab from any screen.
+const badgeState = { unread: 0 };
+let badgeTimer = null;
 
 // ── boot ────────────────────────────────────────────────────────
 (async function init() {
@@ -58,9 +72,64 @@ const TAB_ICONS = {
   } else if (!location.hash || location.hash === '#login') {
     routeToDefault();
   }
+  // Pre-fetch unread count BEFORE first render so the bell tab badge is
+  // accurate on initial paint instead of flashing in ~1 network RTT
+  // later when the first poll resolves.
+  if (session.token) await pokeBadge();
   window.addEventListener('hashchange', render);
   render();
+  if (session.token) startBadgePoll();
 })();
+
+// Poll unread count every 60s so the bell tab badge stays fresh on any
+// screen. The notifications screen itself polls every 30s — its updates
+// flow back through pokeBadge(), keeping the two in sync.
+async function startBadgePoll() {
+  await pokeBadge();
+  if (badgeTimer) clearInterval(badgeTimer);
+  badgeTimer = setInterval(pokeBadge, 60_000);
+}
+
+async function pokeBadge() {
+  // Self-cleaning: if the user logged out (token cleared but the timer
+  // is still firing from a previous session), tear down the interval so
+  // we don't keep noop-polling forever.
+  if (!session.token) {
+    if (badgeTimer) { clearInterval(badgeTimer); badgeTimer = null; }
+    return;
+  }
+  try {
+    // Route through the api() wrapper so a 401 (token expired) triggers
+    // the same logout + redirect as any other authenticated call. The
+    // raw fetch we had before swallowed 401s silently and the badge
+    // froze on its stale count for the rest of the session.
+    const d = await api('/notifications/unread-count');
+    const next = Number(d?.unread) || 0;
+    if (next !== badgeState.unread) {
+      badgeState.unread = next;
+      // In-place DOM patch — cheaper than re-rendering the whole shell.
+      const bell = document.querySelector('[data-tab-bell] .ico');
+      if (bell) {
+        let badgeEl = bell.querySelector('[data-badge-count]');
+        if (next > 0) {
+          if (!badgeEl) {
+            badgeEl = document.createElement('span');
+            badgeEl.className = 'tab-badge';
+            badgeEl.dataset.badgeCount = '1';
+            bell.appendChild(badgeEl);
+          }
+          badgeEl.textContent = next > 99 ? '99+' : String(next);
+        } else if (badgeEl) {
+          badgeEl.remove();
+        }
+      }
+    }
+  } catch {
+    // Network errors are silent — next 60s tick retries. The api() helper
+    // already handles the 401 logout path before throwing.
+  }
+}
+export { pokeBadge, badgeState };
 
 function routeToDefault() {
   const p = profile();
@@ -112,7 +181,7 @@ async function render() {
 
   try {
     const mod = await route.loader();
-    await mod.default.mount(main, { toast, navigate, session, logout });
+    await mod.default.mount(main, { toast, navigate, session, logout, pokeBadge });
   } catch (e) {
     main.innerHTML = `<div class="empty"><div class="ico">⚠️</div><div>${escapeHtml(e.message || 'Failed to load screen')}</div></div>`;
   }
@@ -136,14 +205,26 @@ function buildTabbar(prof, currentPath) {
   // Admins see PM + Shop tabs concatenated so they can drive either
   // workflow from a phone without re-logging-in or context switching.
   // Each tab carries its own profile prefix in the hash so the route
-  // remains unambiguous (#pm/quick-bid vs #shop/maintenance).
-  const tabs = profile() === 'admin'
-    ? ROUTES.pm.map(r => ({ ...r, _prof: 'pm' })).concat(ROUTES.shop.map(r => ({ ...r, _prof: 'shop' })))
-    : (ROUTES[prof] || []).map(r => ({ ...r, _prof: prof }));
+  // remains unambiguous (#pm/quick-bid vs #shop/maintenance). The bell
+  // (notifications) is in both ROUTES.pm and ROUTES.shop — dedupe by
+  // path so admin sees one bell, not two.
+  let tabs;
+  if (profile() === 'admin') {
+    const all = ROUTES.pm.map(r => ({ ...r, _prof: 'pm' })).concat(ROUTES.shop.map(r => ({ ...r, _prof: 'shop' })));
+    const seen = new Set();
+    tabs = all.filter(r => (seen.has(r.path) ? false : seen.add(r.path)));
+  } else {
+    tabs = (ROUTES[prof] || []).map(r => ({ ...r, _prof: prof }));
+  }
   for (const r of tabs) {
     const b = document.createElement('button');
     if (r.path === currentPath && r._prof === prof) b.classList.add('active');
-    b.innerHTML = `<span class="ico">${TAB_ICONS[r.path] || '•'}</span><span>${escapeHtml(r.title)}</span>`;
+    const isBell = r.path === 'notifications';
+    if (isBell) b.dataset.tabBell = '1';
+    const badge = isBell && badgeState.unread > 0
+      ? `<span class="tab-badge" data-badge-count>${badgeState.unread > 99 ? '99+' : badgeState.unread}</span>`
+      : '';
+    b.innerHTML = `<span class="ico">${TAB_ICONS[r.path] || '•'}${badge}</span><span>${escapeHtml(r.title)}</span>`;
     b.onclick = () => navigate(`#${r._prof}/${r.path}`);
     bar.appendChild(b);
   }
@@ -182,8 +263,14 @@ function renderLogin() {
     err.textContent = '';
     try {
       await login(wrap.querySelector('#email').value.trim(), wrap.querySelector('#pass').value);
+      // Pre-fetch unread count BEFORE mutating location.hash. routeToDefault
+      // fires hashchange which triggers an async render() — without this
+      // ordering, that render would race ahead with stale badgeState.unread
+      // and the bell tab would flash an empty badge until the next poll.
+      await pokeBadge();
       routeToDefault();
       render();
+      startBadgePoll();
     } catch (ex) {
       err.textContent = ex.message || 'Sign-in failed';
     }
