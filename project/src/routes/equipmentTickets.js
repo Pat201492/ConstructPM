@@ -533,12 +533,21 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
   // Loop the pickup person in by user FK (pickup_person_id) — the
   // whole point of the request form's pickup-person picker is so the
   // person physically grabbing the gear gets pinged when it's staged.
-  // De-dup against the PM email in case they're the same human.
+  // De-dup against the PM email in case they're the same human. Also
+  // grab their live first+last name so the email template renders the
+  // authoritative current value, not the denormalised text snapshot
+  // (which goes stale if the user is renamed in profile after the
+  // ticket was created).
+  let pickupDisplayName = project.pickup_person || '';
   if (project.pickup_person_id) {
     const pu = await db('users')
       .where({ id: project.pickup_person_id, active: true })
-      .first('email');
+      .first('email', 'first_name', 'last_name');
     if (pu?.email && !modularEmails.includes(pu.email)) modularEmails.push(pu.email);
+    if (pu) {
+      const liveName = `${pu.first_name || ''} ${pu.last_name || ''}`.trim();
+      if (liveName) pickupDisplayName = liveName;
+    }
   }
 
   const createdByName = triggerUser
@@ -554,11 +563,11 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
   const tdStyle = 'padding:6px 12px;border:1px solid #e2e8f0;font-size:13px';
   const thStyle = tdStyle + ';background:#f1f5f9;text-align:left;font-weight:600';
   const bodyRows = (lineRows && lineRows.length > 0)
-    ? lineRows.map(l => `<tr><td style="${tdStyle};text-align:right;width:60px">${escHtml(l.quantity || 1)}</td><td style="${tdStyle}">${escHtml(l.equipment_name || '—')}</td></tr>`).join('')
+    ? lineRows.map(l => `<tr><td style="${tdStyle};text-align:center;width:60px">${escHtml(l.quantity || 1)}</td><td style="${tdStyle}">${escHtml(l.equipment_name || '—')}</td></tr>`).join('')
     : `<tr><td colspan="2" style="${tdStyle};color:#888;font-style:italic">(no line items)</td></tr>`;
   const equipmentTableHtml =
     `<table style="border-collapse:collapse;margin-top:6px">` +
-      `<thead><tr><th style="${thStyle};width:60px">Qty</th><th style="${thStyle}">Equipment</th></tr></thead>` +
+      `<thead><tr><th style="${thStyle};text-align:center;width:60px">Qty</th><th style="${thStyle}">Equipment</th></tr></thead>` +
       `<tbody>${bodyRows}</tbody>` +
     `</table>`;
 
@@ -567,7 +576,7 @@ async function notifyTicketReady({ project, ticketNumber, triggerUser }) {
     {
       ticket_number: String(ticketNumber),
       project_number: project.project_number || '',
-      pickup_person: project.pickup_person || '',
+      pickup_person: pickupDisplayName,
       location: locationLine,
       created_by_name: createdByName,
       equipment_table_html: equipmentTableHtml,
