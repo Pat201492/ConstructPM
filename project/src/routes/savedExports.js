@@ -82,6 +82,21 @@ function validatePayload(req, { partial = false } = {}) {
 
   if (b.filters !== undefined) {
     if (b.filters && typeof b.filters === 'object' && !Array.isArray(b.filters)) {
+      // Validate predicates: column allow-listed against source, op in 6
+      // allowed values. Invalid predicates reject the whole payload (so a
+      // typo doesn't silently disable a filter the user expected to fire).
+      if (Array.isArray(b.filters.predicates)) {
+        const src = b.source || out.source;
+        const allowed = src ? M.allowedColumnKeys(src) : null;
+        const ALLOWED_OPS = new Set(['=', '!=', '>', '<', '>=', '<=']);
+        for (const p of b.filters.predicates) {
+          if (!p || typeof p !== 'object') { errs.push('filters.predicates entries must be objects'); continue; }
+          if (typeof p.column !== 'string') errs.push('filter predicate missing column');
+          else if (allowed && !allowed.has(p.column)) errs.push(`filter column "${p.column}" not valid for source "${src}"`);
+          if (!ALLOWED_OPS.has(p.op)) errs.push(`filter op "${p.op}" not allowed (=, !=, >, <, >=, <=)`);
+          if (p.value === undefined || p.value === null || p.value === '') errs.push(`filter on "${p.column}" missing value`);
+        }
+      }
       out.filters = JSON.stringify(b.filters);
     } else if (b.filters === null) {
       out.filters = JSON.stringify({});

@@ -126,6 +126,39 @@ const ExportBuilder = {
       query = query.where(`${src.table}.status`, filters.status);
     }
 
+    // Predicate filters (PR #48). filters.predicates is an array of
+    //   { column: <key>, op: '=' | '!=' | '>' | '<' | '>=' | '<=', value: <scalar> }
+    // AND-joined onto the existing time-frame / status filters. Each
+    // column is resolved against the source's allowed-columns set; an
+    // unknown column rejects the whole request rather than silently
+    // ignoring (so a typo doesn't quietly return un-filtered data).
+    // Value coercion: numeric strings → Number when the column metadata
+    // marks it numeric; date-ish strings pass through and let SQL handle
+    // the cast.
+    const OP_MAP = { '=': '=', '!=': '!=', '<>': '!=', '>': '>', '<': '<', '>=': '>=', '<=': '<=' };
+    if (Array.isArray(filters.predicates) && filters.predicates.length > 0) {
+      for (const p of filters.predicates) {
+        if (!p || typeof p !== 'object') continue;
+        const key = String(p.column || '');
+        const op = OP_MAP[String(p.op || '=')];
+        if (!op) throw new Error(`Invalid filter operator: ${p.op}`);
+        if (!allowed.has(key)) throw new Error(`Invalid filter column for "${source}": ${key}`);
+        const r = ensureJoinForKey(key);
+        if (!r || r.type === 'enrichment') {
+          throw new Error(`Filter column "${key}" cannot be used as a predicate (enrichment column).`);
+        }
+        let val = p.value;
+        // Coerce numeric-looking strings to Number — Excel-friendly write
+        // path uses the same heuristic, keeps SQL planner from doing
+        // text-comparison on a numeric column.
+        if (typeof val === 'string' && /^-?\d+(\.\d+)?$/.test(val) && !/^0\d/.test(val)) {
+          const n = Number(val);
+          if (!Number.isNaN(n) && Number.isFinite(n)) val = n;
+        }
+        query = query.whereRaw(`?? ${op} ?`, [r.col, val]);
+      }
+    }
+
     // User-scope filter (PR #20 fan-out). `scope_column` must be one of
     // the source's declared userScopeColumns; the runner is responsible
     // for validating before reaching here. If the scope column is on a

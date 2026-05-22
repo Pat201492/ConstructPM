@@ -7522,6 +7522,21 @@ async function renderExports(main) {
   topBar.append(h('div',{},[h('label',{style:'font-size:12px;color:var(--text2)'},'To'),endInput]));
   main.append(topBar);
 
+  // Filter row builder. Lives in a collapsible block above the column
+  // picker so PMs can narrow the result set without leaving the page.
+  // The filter state piggybacks on the `filterState.predicates` array,
+  // which is read at preview / download / email-me time.
+  const filterState = { predicates: [] };
+  const filterFold = h('details',{style:'margin-bottom:14px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)'});
+  filterFold.append(h('summary',{style:'cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)'},'Filters (=, ≠, >, <, ≥, ≤) — optional'));
+  const filterMount = h('div',{style:'margin-top:8px'});
+  filterFold.append(filterMount);
+  main.append(filterFold);
+  const filterCtl = mountFilterPredicateBuilder(filterMount, filterState, {
+    sources: () => sources,
+    getSource: () => selectedSource || '',
+  });
+
   // ── Layout ───────────────────────────────────────────────
   const panels = h('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:20px'});
   const leftPanel = h('div',{id:'exp-left'});
@@ -7620,10 +7635,7 @@ async function renderExports(main) {
         mode: 'create',
         prefillSource: selectedSource,
         prefillColumns: selectedColumns.slice(),
-        prefillFilters: {
-          start_date: readDateInput(startInput) || undefined,
-          end_date: readDateInput(endInput) || undefined,
-        },
+        prefillFilters: buildFiltersPayload(),
         onSaved: loadAndRenderSchedules,
       });
     }},'Save as scheduled export'));
@@ -7752,6 +7764,11 @@ async function renderExports(main) {
     selectedSource = sourceSel.value;
     selectedColumns = [];
     columnSearch = '';
+    // Drop stale filter predicates that referenced the previous source's
+    // columns. Cheap; users adding filters expect them tied to the
+    // current source anyway.
+    filterState.predicates = [];
+    if (filterCtl && filterCtl.rerender) filterCtl.rerender();
     renderLeft();
     renderRight();
   };
@@ -7764,10 +7781,7 @@ async function renderExports(main) {
     try {
       const result = await api('/exports/builder/preview',{method:'POST',body:JSON.stringify({
         source:selectedSource, columns:selectedColumns,
-        filters:{
-          start_date: readDateInput(startInput) || undefined,
-          end_date: readDateInput(endInput) || undefined,
-        },
+        filters: buildFiltersPayload(),
       })});
       area.innerHTML = '';
       area.append(h('p',{style:'font-size:11px;color:var(--text3);margin-bottom:6px'},
@@ -7778,6 +7792,17 @@ async function renderExports(main) {
     }
   }
 
+  function buildFiltersPayload() {
+    const f = {
+      start_date: readDateInput(startInput) || undefined,
+      end_date: readDateInput(endInput) || undefined,
+    };
+    if (Array.isArray(filterState.predicates) && filterState.predicates.length > 0) {
+      f.predicates = filterState.predicates.filter(p => p.column && p.op && p.value !== '' && p.value != null);
+    }
+    return f;
+  }
+
   async function doDownload(format = 'csv') {
     if (!selectedSource || selectedColumns.length === 0) return alert('Select a source and columns');
     try {
@@ -7785,10 +7810,7 @@ async function renderExports(main) {
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.token},
         body:JSON.stringify({
           source:selectedSource, columns:selectedColumns,
-          filters:{
-            start_date: readDateInput(startInput) || undefined,
-            end_date: readDateInput(endInput) || undefined,
-          },
+          filters: buildFiltersPayload(),
         })});
       if (!resp.ok) {
         // Surface server-side validation (unknown format, missing source, etc.)
@@ -7818,10 +7840,7 @@ async function renderExports(main) {
       const resp = await api('/exports/builder/email-me', { method: 'POST', body: JSON.stringify({
         source: selectedSource,
         columns: selectedColumns,
-        filters: {
-          start_date: readDateInput(startInput) || undefined,
-          end_date: readDateInput(endInput) || undefined,
-        },
+        filters: buildFiltersPayload(),
         formats: choice,
       })});
       alert(`Sent ${resp.delivered}/${resp.delivered + resp.failed} email(s) to ${resp.to} — ${resp.rowCount} row${resp.rowCount === 1 ? '' : 's'}.`);
@@ -8312,6 +8331,19 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
     renderGroupingLevelOpts();
   })();
 
+  // ── Section 2.25: Filters (optional) ──────────────────────
+  // Predicate filters AND-joined. Time frame (in chosenFilters) stays
+  // independent. Storage flows into chosenFilters.predicates so the
+  // existing /exports/schedules POST/PATCH path picks it up unchanged.
+  modal.append(seHeader('Filters (optional)'));
+  const filterWrap = h('div',{style:'background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:14px'});
+  modal.append(filterWrap);
+  if (!Array.isArray(chosenFilters.predicates)) chosenFilters.predicates = [];
+  const filterCtl = mountFilterPredicateBuilder(filterWrap, chosenFilters, {
+    sources: () => sources,
+    getSource: () => chosenSource,
+  });
+
   // ── Section 2.5: Grouping (optional) ──────────────────────
   // Up to 3 nested grouping levels — e.g. PM → Customer → Status. The
   // renderer drops a banded header row each time a level value changes
@@ -8367,10 +8399,14 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
     initialLevels.forEach((k, i) => { if (levelSelectors[i]) levelSelectors[i].value = k; });
     if (initialSortBy) sortBySel.value = initialSortBy;
   }
-  // Re-render when source changes too.
+  // Re-render when source changes too. Filter predicates also reset so
+  // a stale predicate referencing the prior source's column doesn't
+  // survive the switch.
   const _origSrcOnChange = srcSel.onchange;
   srcSel.onchange = () => {
     if (_origSrcOnChange) _origSrcOnChange();
+    chosenFilters.predicates = [];
+    if (filterCtl && filterCtl.rerender) filterCtl.rerender();
     renderGroupingLevelOpts();
   };
 
@@ -8540,6 +8576,90 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
 // selectedSet     — Set<userId> to read/mutate (caller's reference; the
 //                   final submit reads back from this same Set).
 // opts.placeholder, opts.maxResults — optional cosmetics.
+// Mount a filter-predicate builder: rows of (column, operator, value)
+// AND-joined. Caller passes a `state` object with .predicates array and
+// a `getSource()` callback that returns the current source key string;
+// rebuild() reads the live source so the column dropdown stays in sync
+// when the parent switches sources.
+//
+// container — DOM element to mount into; its children are owned by this
+//             helper. Existing styles preserved.
+// state.predicates — array of { column, op, value }, mutated in place
+//                    so the caller can read it back at submit time.
+// opts.sources — sources map (key → { groups: [...] })
+// opts.getSource — () => current source key
+function mountFilterPredicateBuilder(container, state, opts) {
+  const sources = () => (typeof opts.sources === 'function' ? opts.sources() : opts.sources) || {};
+  const getSource = opts.getSource || (() => '');
+  const OPS = [
+    ['=',  '='],
+    ['!=', '≠'],
+    ['>',  '>'],
+    ['<',  '<'],
+    ['>=', '≥'],
+    ['<=', '≤'],
+  ];
+
+  function colsForSource() {
+    const src = sources()[getSource()];
+    if (!src || !Array.isArray(src.groups)) return [];
+    return src.groups.flatMap(g => g.columns.map(c => ({
+      key: c.key,
+      label: (g.group ? g.group + ' · ' : '') + c.label,
+    })));
+  }
+
+  function render() {
+    container.innerHTML = '';
+    const cols = colsForSource();
+    if (cols.length === 0) {
+      container.append(h('p',{style:'color:var(--text3);font-size:12px;font-style:italic;margin:4px 0'},
+        'Pick a source first to add filters.'));
+      return;
+    }
+    state.predicates.forEach((p, idx) => {
+      const row = h('div',{style:'display:flex;gap:6px;align-items:center;margin-bottom:4px'});
+      const colSel = h('select',{style:'flex:2;font-size:12px;min-width:0'});
+      cols.forEach(c => colSel.append(h('option',{value:c.key}, c.label)));
+      if (cols.find(c => c.key === p.column)) colSel.value = p.column;
+      else if (cols.length > 0) { colSel.value = cols[0].key; p.column = cols[0].key; }
+      colSel.onchange = () => { p.column = colSel.value; };
+
+      const opSel = h('select',{style:'width:64px;font-size:12px'});
+      OPS.forEach(([k,l]) => opSel.append(h('option',{value:k}, l)));
+      opSel.value = p.op || '=';
+      opSel.onchange = () => { p.op = opSel.value; };
+
+      const valInp = h('input',{type:'text',value:p.value ?? '',
+        placeholder:'value', style:'flex:1;font-size:12px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);min-width:0'});
+      valInp.oninput = () => { p.value = valInp.value; };
+
+      const del = h('button',{type:'button',className:'btn-red btn-sm',style:'padding:0 8px;font-size:13px',
+        onclick:()=>{ state.predicates.splice(idx, 1); render(); }},'×');
+
+      row.append(colSel); row.append(opSel); row.append(valInp); row.append(del);
+      container.append(row);
+    });
+
+    const addBtn = h('button',{type:'button',className:'btn-outline btn-sm',
+      style:'margin-top:4px;font-size:11px;padding:3px 10px',
+      onclick:()=>{
+        const first = (colsForSource()[0] || {}).key || '';
+        state.predicates.push({ column: first, op: '=', value: '' });
+        render();
+      }},'+ Add filter');
+    container.append(addBtn);
+
+    if (state.predicates.length > 0) {
+      container.append(h('p',{style:'color:var(--text3);font-size:11px;font-style:italic;margin:6px 0 0'},
+        'Filters are AND-joined. Time frame (above) applies on top — blank time frame = all time.'));
+    }
+  }
+
+  render();
+  return { rerender: render };
+}
+
 function mountRecipientPicker(container, selectedSet, opts) {
   opts = opts || {};
   const placeholder = opts.placeholder || 'Type a name or email…';
