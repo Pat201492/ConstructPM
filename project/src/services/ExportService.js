@@ -68,6 +68,20 @@ const ExportService = {
     return wb.xlsx.writeBuffer();
   },
 
+  // ── PDF UTILITY ──────────────────────────────────────────────
+  // Thin wrapper over ExportFileGenerator.toPDF so the builder /
+  // SavedExportRunner pipeline can call `toPDF(headers, rows, source)`
+  // with the same shape they call toXLSX / toCSV. The underlying renderer
+  // is the same one the fan-out runner uses for per-user-role multi-
+  // section reports — one PDF code path in the codebase.
+  async toPDF(headers, rows, sourceName) {
+    const ExportFileGenerator = require('./ExportFileGenerator');
+    return ExportFileGenerator.toPDF(
+      [{ name: sourceName || 'Export', headers, rows }],
+      { title: sourceName || 'ConstructPM Export' },
+    );
+  },
+
   _fmtDate(v) { if (!v) return ''; const d = new Date(v); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; },
   _fmtAmt(v) { return v != null ? parseFloat(v).toFixed(2) : '0.00'; },
   _fmtHrs(v) { return v != null ? parseFloat(v).toFixed(2) : '0.00'; },

@@ -7478,6 +7478,7 @@ async function renderExports(main) {
     const actions = h('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'});
     actions.append(h('button',{className:'btn',onclick:() => doDownload('csv')},'Download CSV'));
     actions.append(h('button',{className:'btn',onclick:() => doDownload('xlsx')},'Download Excel'));
+    actions.append(h('button',{className:'btn',onclick:() => doDownload('pdf')},'Download PDF'));
     actions.append(h('button',{className:'btn-outline',onclick:doPreview},'Preview'));
     actions.append(h('button',{className:'btn-outline',title:'Open the scheduled-export builder pre-filled with the current source + selected columns',onclick:()=>{
       if (!selectedSource || selectedColumns.length === 0) return alert('Pick a source and columns first');
@@ -8158,11 +8159,10 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
   const fmtBoxesBuilder = {};
   emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Attachment formats'));
   const fmtRow = h('div',{style:'display:flex;gap:14px;align-items:center;font-size:12px'});
-  [['csv','CSV'],['xlsx','Excel'],['pdf','PDF (coming in PR #46)']].forEach(([k,lbl]) => {
+  [['csv','CSV'],['xlsx','Excel'],['pdf','PDF']].forEach(([k,lbl]) => {
     const box = h('label',{style:'display:inline-flex;align-items:center;gap:4px;cursor:pointer'});
     const cb = h('input',{type:'checkbox',style:'width:auto'});
     cb.checked = initialFormatsBuilder.has(k);
-    if (k === 'pdf') { cb.disabled = true; cb.checked = false; box.style.opacity = '0.5'; }
     fmtBoxesBuilder[k] = cb;
     box.append(cb); box.append(document.createTextNode(lbl));
     fmtRow.append(box);
