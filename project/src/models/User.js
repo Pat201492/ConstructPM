@@ -11,6 +11,7 @@ const SAFE_FIELDS = [
   'tab_overrides', 'access_config', 'default_markup_pct',
   'on_schedule',
   'is_superadmin',
+  'must_change_password',
   'last_login_at', 'created_at', 'updated_at',
 ];
 

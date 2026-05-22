@@ -81,6 +81,7 @@ router.post(
           lastName: user.last_name,
           role: user.role,
           default_markup_pct: user.default_markup_pct || 15,
+          must_change_password: !!user.must_change_password,
         },
         allowed_tabs,
         bid_visibility: roleConfig?.bid_visibility || 'own',
@@ -252,8 +253,10 @@ router.post(
         return res.status(401).json({ error: 'Current password is incorrect' });
       }
 
-      // User.update handles hashing when passed a `password` field
-      await User.update(req.user.id, { password: req.body.newPassword });
+      // User.update handles hashing when passed a `password` field.
+      // Clear the first-login flag so the next login routes to the
+      // normal landing page instead of looping back to the forced reset.
+      await User.update(req.user.id, { password: req.body.newPassword, must_change_password: false });
 
       res.json({ message: 'Password changed successfully' });
     } catch (err) {

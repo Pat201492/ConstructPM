@@ -622,7 +622,10 @@ async function login(email, pass) {
   if (USER_TIMEZONE && data.user.default_timezone !== USER_TIMEZONE) {
     api('/users/me/timezone', {method:'PATCH', body:JSON.stringify({timezone: USER_TIMEZONE})}).catch(()=>{});
   }
-  navigate('dashboard');
+  // First login (admin-created or seeded with a default password) lands on
+  // the forced reset screen instead of the dashboard — server clears the
+  // must_change_password flag on successful change.
+  navigate(data.user.must_change_password ? 'force-change-password' : 'dashboard');
 }
 function logout() {
   // Wipe every auth-derived field on S so the next login starts clean.
@@ -991,6 +994,13 @@ async function render() {
   root.innerHTML='';
   if(S.page==='login') return renderLogin(root);
   if(!S.token) return navigate('login');
+  // Forced reset on first login — no sidebar / no dev bar so the user
+  // can't skip past it. Cleared the moment the change-password POST
+  // succeeds; subsequent /auth/me responses carry the flag too so a
+  // refresh mid-session can't bypass it.
+  if (S.page === 'force-change-password' || (S.user && S.user.must_change_password)) {
+    return renderForceChangePassword(root);
+  }
 
   // Update unread count
   try { const n=await api('/notifications/unread-count'); S.unread=n.unread||0; } catch{}
@@ -1124,6 +1134,42 @@ function renderLogin(root) {
     catch(e){$('#login-error').textContent=e.message}
   };
   $('#login-pass').onkeydown=e=>{if(e.key==='Enter')$('#login-btn').click()};
+}
+
+// Forced password reset on first login. Same shell as the login page so
+// the user can't visually skip it. Sign Out is shown as an escape hatch
+// (cancel the flow and try a different account) but there's no way to
+// reach the rest of the SPA without setting a new password.
+function renderForceChangePassword(root) {
+  const box = h('div', {className:'login-page'});
+  const form = h('div', {className:'login-box'});
+  form.innerHTML = `<h1>Set a new password</h1>
+    <p>Your account is using a temporary password. Please choose a new one to continue.</p>
+    <div class="form-group"><label>Current password</label><input type="password" id="fp-current"></div>
+    <div class="form-group"><label>New password</label><input type="password" id="fp-new" placeholder="Min 8 characters"></div>
+    <div class="form-group"><label>Confirm new password</label><input type="password" id="fp-confirm"></div>
+    <button class="btn" id="fp-btn">Save new password</button>
+    <button class="btn-outline" id="fp-logout" style="margin-left:8px">Sign out</button>
+    <div id="fp-error" class="error"></div>`;
+  box.append(form);
+  root.append(box);
+  $('#fp-btn').onclick = async () => {
+    const cur = $('#fp-current').value;
+    const np = $('#fp-new').value;
+    const cf = $('#fp-confirm').value;
+    if (!cur) return $('#fp-error').textContent = 'Enter your current password';
+    if (np.length < 8) return $('#fp-error').textContent = 'New password must be at least 8 characters';
+    if (np !== cf) return $('#fp-error').textContent = 'New passwords do not match';
+    try {
+      await api('/auth/change-password', {method:'POST', body: JSON.stringify({currentPassword: cur, newPassword: np})});
+      if (S.user) S.user.must_change_password = false;
+      navigate('dashboard');
+    } catch (e) {
+      $('#fp-error').textContent = e.message;
+    }
+  };
+  $('#fp-logout').onclick = () => logout();
+  $('#fp-confirm').onkeydown = e => { if (e.key === 'Enter') $('#fp-btn').click(); };
 }
 
 // ═══════════════════════════════════════════════════════════
