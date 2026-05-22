@@ -7,6 +7,9 @@
 // ticket creation).
 
 import { api } from '../lib/api.js';
+import { pickerHtml, bindPicker } from '../lib/pickers.js';
+
+const projectLabel = (p) => p.primary_number || p.name || p.id;
 
 export default {
   async mount(root, ctx) {
@@ -45,13 +48,12 @@ export default {
       wrap.innerHTML = `
         <div class="section-title">Project</div>
         <div class="card">
-          <div>
-            <label>Project</label>
-            <select data-field="project_id">
-              <option value="">— Select project —</option>
-              ${state.projects.map(p => `<option value="${esc(p.id)}" ${p.id === state.form.project_id ? 'selected' : ''}>${esc(p.primary_number || p.name || p.id)}</option>`).join('')}
-            </select>
-          </div>
+          ${pickerHtml({
+            id: 'project_id',
+            label: 'Project',
+            selectedDisplay: (() => { const p = state.projects.find(x => x.id === state.form.project_id); return p ? projectLabel(p) : ''; })(),
+            placeholder: 'Type to search your projects…',
+          })}
           <div style="margin-top:8px"><label>Pick up person</label><input data-field="pickup_person" value="${esc(state.form.pickup_person)}" /></div>
           <div style="margin-top:8px"><label>Requestor</label><input data-field="requestor_name" value="${esc(state.form.requestor_name)}" /></div>
           <div style="margin-top:8px"><label>Location name</label><input data-field="location_name" value="${esc(state.form.location_name)}" /></div>
@@ -71,23 +73,32 @@ export default {
       `;
       root.appendChild(wrap);
 
-      // Header field bindings
+      // Header field bindings (text inputs)
       wrap.querySelectorAll('[data-field]').forEach(el => {
         el.onchange = () => { state.form[el.dataset.field] = el.value; };
       });
-      wrap.querySelector('[data-field="project_id"]').onchange = async (e) => {
-        state.form.project_id = e.target.value;
-        if (!state.form.project_id) return;
-        try {
-          const r = await api('/projects/' + state.form.project_id);
-          const p = r.project || r;
-          if (!state.form.location_name) state.form.location_name = p.location_name || p.address || '';
-          if (!state.form.location_address) state.form.location_address = p.address || '';
-          if (!state.form.site_contact_name) state.form.site_contact_name = p.site_contact_name || '';
-          if (!state.form.site_contact_phone) state.form.site_contact_phone = p.site_contact_phone || '';
+
+      // Project picker — type-to-filter. On select, fetch the project to
+      // auto-fill location + site contact fields (only if currently empty
+      // so we don't clobber user edits).
+      bindPicker(wrap, {
+        id: 'project_id',
+        items: state.projects,
+        labelFn: projectLabel,
+        onPick: async (pickedId) => {
+          state.form.project_id = pickedId;
+          if (!pickedId) { render(); return; }
+          try {
+            const r = await api('/projects/' + pickedId);
+            const p = r.project || r;
+            if (!state.form.location_name) state.form.location_name = p.location_name || p.address || '';
+            if (!state.form.location_address) state.form.location_address = p.address || '';
+            if (!state.form.site_contact_name) state.form.site_contact_name = p.site_contact_name || '';
+            if (!state.form.site_contact_phone) state.form.site_contact_phone = p.site_contact_phone || '';
+          } catch {}
           render();
-        } catch {}
-      };
+        },
+      });
 
       // Line field bindings
       wrap.querySelectorAll('[data-line]').forEach(el => {

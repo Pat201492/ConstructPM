@@ -859,9 +859,9 @@ router.post('/:id/snooze', authorize('bids:update'), async (req, res, next) => {
 
 router.patch('/:id', authorize('bids:update'), async (req, res, next) => {
   try {
-    const allowed = ['customer_id', 'customer_contact_id', 'location_id', 'project_scope',
-      'description', 'local_union', 'miles_from_hq', 'markup_pct', 'project_length_days',
-      'due_date', 'submit_date', 'status', 'assigned_pm_id'];
+    const allowed = ['customer_id', 'customer_contact_id', 'site_contact_id', 'location_id',
+      'project_scope', 'description', 'local_union', 'miles_from_hq', 'markup_pct',
+      'project_length_days', 'due_date', 'submit_date', 'status', 'assigned_pm_id'];
     const data = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) data[key] = req.body[key];
@@ -890,6 +890,26 @@ router.patch('/:id', authorize('bids:update'), async (req, res, next) => {
       if (loc) {
         if (data.local_union === undefined) data.local_union = loc.local_union;
         if (data.miles_from_hq === undefined) data.miles_from_hq = loc.miles_from_hq;
+      }
+    }
+
+    // Mirror POST /bids site-contact denormalization (lines 177-186) on
+    // PATCH so a later /quick-project carries the correct site_contact
+    // name + phone onto the project. Resolves on any explicit change to
+    // either site_contact_id or customer_contact_id (which is the fallback
+    // for site contact, same as bid create).
+    if (data.site_contact_id !== undefined || data.customer_contact_id !== undefined) {
+      const existing = await db('bids').where('id', req.params.id).first('site_contact_id', 'customer_contact_id');
+      const effectiveSiteId = (data.site_contact_id !== undefined ? data.site_contact_id : existing?.site_contact_id)
+        || (data.customer_contact_id !== undefined ? data.customer_contact_id : existing?.customer_contact_id)
+        || null;
+      if (effectiveSiteId) {
+        const sc = await db('contacts').where('id', effectiveSiteId).first();
+        data.site_contact_name = sc ? sc.name : null;
+        data.site_contact_phone = sc ? (sc.phone || null) : null;
+      } else {
+        data.site_contact_name = null;
+        data.site_contact_phone = null;
       }
     }
 

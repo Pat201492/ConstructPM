@@ -64,6 +64,9 @@ const TAB_ICONS = {
 
 function routeToDefault() {
   const p = profile();
+  // Admin lands on the first PM tab. The PM tab bar comes first in the
+  // admin shell ordering, so this matches what the user sees.
+  if (p === 'admin') { location.hash = `#pm/${ROUTES.pm[0].path}`; return; }
   const list = ROUTES[p];
   if (list && list.length) {
     location.hash = `#${p}/${list[0].path}`;
@@ -93,8 +96,9 @@ async function render() {
     return;
   }
   // Profile guard: a shop_staff user can't reach #pm/* routes (and vice
-  // versa). Admins map to 'pm' in profile() so they're allowed on #pm/*.
-  if (profile() !== prof) {
+  // versa). Admins (profile === 'admin') are allowed on either pm/* or
+  // shop/* — they get the union of both tab bars in buildTabbar().
+  if (profile() !== prof && profile() !== 'admin') {
     routeToDefault();
     return;
   }
@@ -129,11 +133,18 @@ function buildAppbar(title) {
 function buildTabbar(prof, currentPath) {
   const bar = document.createElement('nav');
   bar.className = 'tabbar';
-  for (const r of ROUTES[prof] || []) {
+  // Admins see PM + Shop tabs concatenated so they can drive either
+  // workflow from a phone without re-logging-in or context switching.
+  // Each tab carries its own profile prefix in the hash so the route
+  // remains unambiguous (#pm/quick-bid vs #shop/maintenance).
+  const tabs = profile() === 'admin'
+    ? ROUTES.pm.map(r => ({ ...r, _prof: 'pm' })).concat(ROUTES.shop.map(r => ({ ...r, _prof: 'shop' })))
+    : (ROUTES[prof] || []).map(r => ({ ...r, _prof: prof }));
+  for (const r of tabs) {
     const b = document.createElement('button');
-    if (r.path === currentPath) b.classList.add('active');
+    if (r.path === currentPath && r._prof === prof) b.classList.add('active');
     b.innerHTML = `<span class="ico">${TAB_ICONS[r.path] || '•'}</span><span>${escapeHtml(r.title)}</span>`;
-    b.onclick = () => navigate(`#${prof}/${r.path}`);
+    b.onclick = () => navigate(`#${r._prof}/${r.path}`);
     bar.appendChild(b);
   }
   return bar;

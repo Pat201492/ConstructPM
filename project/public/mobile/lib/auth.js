@@ -55,11 +55,13 @@ export function logout() {
   location.hash = '#login';
 }
 
-// Returns 'pm' | 'shop' | 'other' based on user.role. Admins map to 'pm'
-// since their typical mobile actions overlap with PM duties (per plan).
+// Returns 'pm' | 'shop' | 'admin' | 'other' based on user.role. Admins
+// get their own profile so the shell can render PM + Shop tabs together
+// (admins often wear both hats and may need either workflow on a phone).
 export function profile() {
   const r = session.user?.role;
-  if (r === 'project_manager' || r === 'admin') return 'pm';
+  if (r === 'admin') return 'admin';
+  if (r === 'project_manager') return 'pm';
   if (r === 'shop_staff') return 'shop';
   return 'other';
 }
