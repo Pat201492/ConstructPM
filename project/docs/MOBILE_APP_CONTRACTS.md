@@ -20,7 +20,6 @@ fields → submits → creates/updates a row in the equipment table
 - Manufacturer Name
 - Equipment Name
 - Equipment Type
-- Equipment Subtype
 
 **Optional fields:**
 - Cert Date
@@ -30,7 +29,7 @@ fields → submits → creates/updates a row in the equipment table
 - The barcode value is the equipment's scan key.
 - Same data structure as the canonical equipment record.
 - This path is NOT the OCR handwriting path — it's structured input,
-  so the cascading-dropdown helpers (type→subtype→id) should apply.
+  so the cascading-dropdown helpers (type→name→manufacturer) should apply.
 
 ---
 
@@ -99,7 +98,7 @@ equipment** + an **Add Entry** button.
 
 - Add/Remove and similar binary actions use the **two-button toggle**
   pattern (explicit taps, no hover menus).
-- Cascading selection lists (equipment name / type / subtype / id)
+- Cascading selection lists (equipment name / type / manufacturer / id)
   must show a **scroll-capped window** — list does not extend forever;
   user scrolls within a fixed-height container.
 - Quantity defaults to **1** when a new request line is created;
@@ -114,7 +113,7 @@ equipment** + an **Add Entry** button.
 
 | Purpose | Method + Path | Notes |
 |---|---|---|
-| Equipment barcode entry | `POST /api/equipment/mobile/entry` | Mandatory: barcode_id, manufacturer, equipment_name, equipment_type, equipment_subtype. Optional: certification_date. Updates if barcode exists, else creates. Server-enforces mandatory fields. |
+| Equipment barcode entry | `POST /api/equipment/mobile/entry` | Mandatory: barcode_id, manufacturer, equipment_name, equipment_type. Optional: certification_date. Updates if barcode exists, else creates. Server-enforces mandatory fields. |
 | Barcode lookup | `GET /api/equipment/barcode/:code` | Full equipment record + history + docs |
 | Return to shop (scan) | `POST /api/equipment/mobile/return` | Body `{barcode_id}`. Unconditional → location='shop', current_project_id=null, status_change_date=today |
 | Maintenance lookup (scan) | `GET /api/equipment/mobile/maintenance/:code` | Returns equipment (incl. EquipNum/barcode_id for display) + its maintenance records |
