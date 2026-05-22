@@ -91,11 +91,26 @@ export default {
       }
     }
 
-    function navigateForReference(n) {
-      // For now, only equipment_ticket has a mobile screen. Everything
-      // else just marks read and stays on the bell.
+    async function navigateForReference(n) {
       if (n.reference_type === 'equipment_ticket') {
         ctx.navigate('#shop/active-tickets');
+        return;
+      }
+      // project_schedule notifications open the calendar card overlay
+      // directly on top of the bell — same UX as the desktop SPA. The
+      // popup is lazy-loaded so the rest of the bell screen stays slim.
+      if (n.reference_type === 'project_schedule' && n.reference_id) {
+        try {
+          const mod = await import('./schedule-edit.js');
+          await mod.openScheduleEdit(n.reference_id, {
+            toast: ctx.toast,
+            // After save, refresh the bell list — the saved schedule may
+            // close its own actionable notification on the server side.
+            onSaved: refresh,
+          });
+        } catch (e) {
+          ctx.toast(e.message || 'Failed to open schedule', 'danger');
+        }
       }
     }
 
@@ -150,7 +165,7 @@ export default {
       `;
       card.onclick = async () => {
         await markRead(n);
-        navigateForReference(n);
+        await navigateForReference(n);
       };
       return card;
     }
