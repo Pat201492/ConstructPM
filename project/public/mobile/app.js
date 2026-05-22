@@ -263,10 +263,12 @@ function renderLogin() {
     err.textContent = '';
     try {
       await login(wrap.querySelector('#email').value.trim(), wrap.querySelector('#pass').value);
-      routeToDefault();
-      // Pre-fetch unread count before render so the bell tab badge is
-      // accurate on the first paint after login.
+      // Pre-fetch unread count BEFORE mutating location.hash. routeToDefault
+      // fires hashchange which triggers an async render() — without this
+      // ordering, that render would race ahead with stale badgeState.unread
+      // and the bell tab would flash an empty badge until the next poll.
       await pokeBadge();
+      routeToDefault();
       render();
       startBadgePoll();
     } catch (ex) {
