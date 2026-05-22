@@ -297,11 +297,14 @@ function renderForceChangePassword() {
   app.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'login';
+  // No "current password" field — the user just authenticated with the
+  // admin-set default at the login step that preceded this screen.
+  // Endpoint /auth/initial-password-change only accepts the call while
+  // must_change_password is still true (server enforces).
   wrap.innerHTML = `
     <h1>Set a new password</h1>
     <p class="muted small" style="margin:-12px 0 16px">Your account is using a temporary password. Choose a new one to continue.</p>
     <form>
-      <div><label>Current password</label><input id="fp-current" type="password" autocomplete="current-password" required /></div>
       <div><label>New password</label><input id="fp-new" type="password" autocomplete="new-password" minlength="8" placeholder="Min 8 characters" required /></div>
       <div><label>Confirm new password</label><input id="fp-confirm" type="password" autocomplete="new-password" required /></div>
       <button class="btn block accent" type="submit">Save new password</button>
@@ -317,14 +320,13 @@ function renderForceChangePassword() {
     const submitBtn = form.querySelector('button[type="submit"]');
     if (submitBtn.disabled) return; // guard rapid double-tap race
     err.textContent = '';
-    const cur = wrap.querySelector('#fp-current').value;
     const np = wrap.querySelector('#fp-new').value;
     const cf = wrap.querySelector('#fp-confirm').value;
     if (np.length < 8) { err.textContent = 'New password must be at least 8 characters'; return; }
     if (np !== cf) { err.textContent = 'New passwords do not match'; return; }
     submitBtn.disabled = true;
     try {
-      await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword: cur, newPassword: np }) });
+      await api('/auth/initial-password-change', { method: 'POST', body: JSON.stringify({ newPassword: np }) });
       if (session.user) session.user.must_change_password = false;
       routeToDefault();
       render();

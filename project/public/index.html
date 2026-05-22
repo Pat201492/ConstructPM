@@ -1143,9 +1143,13 @@ function renderLogin(root) {
 function renderForceChangePassword(root) {
   const box = h('div', {className:'login-page'});
   const form = h('div', {className:'login-box'});
+  // No "current password" field — the user just authenticated with the
+  // admin-set default at the login step that preceded this screen.
+  // Asking again is friction without security benefit. Endpoint is
+  // /auth/initial-password-change which only accepts the call while
+  // must_change_password is still true (server enforces).
   form.innerHTML = `<h1>Set a new password</h1>
     <p>Your account is using a temporary password. Please choose a new one to continue.</p>
-    <div class="form-group"><label>Current password</label><input type="password" id="fp-current"></div>
     <div class="form-group"><label>New password</label><input type="password" id="fp-new" placeholder="Min 8 characters"></div>
     <div class="form-group"><label>Confirm new password</label><input type="password" id="fp-confirm"></div>
     <button class="btn" id="fp-btn">Save new password</button>
@@ -1156,15 +1160,13 @@ function renderForceChangePassword(root) {
   $('#fp-btn').onclick = async () => {
     const btn = $('#fp-btn');
     if (btn.disabled) return; // guard rapid double-click race
-    const cur = $('#fp-current').value;
     const np = $('#fp-new').value;
     const cf = $('#fp-confirm').value;
-    if (!cur) return $('#fp-error').textContent = 'Enter your current password';
     if (np.length < 8) return $('#fp-error').textContent = 'New password must be at least 8 characters';
     if (np !== cf) return $('#fp-error').textContent = 'New passwords do not match';
     btn.disabled = true;
     try {
-      await api('/auth/change-password', {method:'POST', body: JSON.stringify({currentPassword: cur, newPassword: np})});
+      await api('/auth/initial-password-change', {method:'POST', body: JSON.stringify({newPassword: np})});
       if (S.user) S.user.must_change_password = false;
       navigate('dashboard');
     } catch (e) {
