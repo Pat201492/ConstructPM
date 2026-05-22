@@ -5435,22 +5435,45 @@ async function renderSchedule(main) {
     cell.append(h('div',{style:`font-size:11px;color:${isToday ? 'var(--primary)' : 'var(--text2)'};font-weight:${isToday ? 700 : 400};margin-bottom:2px`}, String(day.getDate())));
 
     projects.filter(p => projectOccupiesDay(p, day)).forEach(p => {
+      const dKey = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
+      const crewCount = (p.assignment_counts && p.assignment_counts[dKey]) || 0;
+
+      // Two-line card: top line = project + customer, bottom line = View
+      // Crew button. Card itself navigates to the schedule edit popup;
+      // the button click stopPropagations and opens the per-day crew
+      // list. Single-line nowrap retained on the project text so a long
+      // customer name truncates rather than pushing the button off-grid.
       const card = h('div',{
         title: `${p.primary_number || p.name} — ${p.customer_name || ''} (PM: ${p.pm_name || '—'})\nStart: ${p.start_date} • Length: ${p.project_length_days || '?'}d • Personnel: ${p.manpower || '?'}` + (p.address ? `\nAddress: ${p.address}` : ''),
         style: `
           background:${colorForProject(p.id)};
           color:#fff;
-          padding:2px 6px;
-          margin-bottom:2px;
+          padding:3px 6px 4px;
+          margin-bottom:3px;
           border-radius:3px;
           font-size:10px;
           line-height:1.3;
           cursor:pointer;
-          overflow:hidden;
-          text-overflow:ellipsis;
-          white-space:nowrap;
         `,
-      }, (p.primary_number || p.name || 'Project') + (p.customer_name ? ' · ' + p.customer_name : ''));
+      });
+      const top = h('div',{style:'overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},
+        (p.primary_number || p.name || 'Project') + (p.customer_name ? ' · ' + p.customer_name : ''));
+      card.append(top);
+      const btn = h('button',{
+        type:'button',
+        style: `display:block;width:100%;margin-top:3px;padding:1px 4px;border:none;border-radius:2px;font-size:9px;font-weight:600;cursor:${crewCount > 0 ? 'pointer' : 'default'};${crewCount > 0 ? 'background:var(--primary);color:#fff' : 'background:rgba(255,255,255,0.25);color:rgba(255,255,255,0.65)'}`,
+        title: crewCount > 0 ? `View ${crewCount} crew member${crewCount === 1 ? '' : 's'}` : 'No crew assigned yet',
+      }, crewCount > 0 ? `View Crew (${crewCount})` : 'View Crew');
+      if (crewCount > 0) {
+        btn.onclick = (e) => { e.stopPropagation(); showCrewListModal(p, dKey); };
+      } else {
+        btn.disabled = true;
+        // disabled buttons can still receive click events on some browsers;
+        // stopPropagation is defensive so the card's onclick doesn't fire
+        // when the user tries to click the (clearly inactive) button.
+        btn.onclick = (e) => e.stopPropagation();
+      }
+      card.append(btn);
       card.onclick = () => showScheduleEditPopup(p.id, () => { main.innerHTML=''; renderSchedule(main); });
       cell.append(card);
     });
@@ -5473,6 +5496,62 @@ async function renderSchedule(main) {
 
 // Schedule edit pop-up — start date + working day overrides for one project.
 // onSaved fires after successful PATCH so the calendar can refresh.
+// Read-only crew list for a single project + date. Surfaced from the
+// Schedule tab calendar card's "View Crew" button. Mirrors the data
+// fetch used by showSchedulerDayPopup but skips all the staffing UI —
+// PMs viewing the Schedule tab aren't managing assignments here, they
+// just want to see who's on the job that day.
+async function showCrewListModal(project, dateKey) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:480px'});
+  modal.append(h('h2',{},(project.primary_number ? project.primary_number + ' — ' : '') + (project.name || 'Project')));
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:6px'},
+    `Customer: ${project.customer_name || '—'} • Date: ${dateKey}`));
+  if (project.address) {
+    modal.append(h('p',{style:'color:var(--text);font-size:12px;margin-bottom:10px'},[
+      h('strong',{},'Address: '),
+      document.createTextNode(project.address),
+    ]));
+  }
+
+  const loading = h('p',{style:'color:var(--text3)'},'Loading…');
+  modal.append(loading);
+  overlay.append(modal); document.body.append(overlay);
+
+  let assignments = [];
+  try {
+    const r = await api('/projects/' + project.id + '/assignments');
+    assignments = (r.assignments || []).filter(a => String(a.work_date).slice(0, 10) === dateKey);
+  } catch (err) {
+    loading.textContent = 'Could not load crew: ' + err.message;
+    modal.append(h('button',{className:'btn-outline',style:'margin-top:10px',onclick:()=>overlay.remove()},'Close'));
+    return;
+  }
+
+  loading.remove();
+  if (assignments.length === 0) {
+    modal.append(h('p',{style:'color:var(--text3);font-style:italic'},'No crew assigned for this day.'));
+  } else {
+    modal.append(h('p',{style:'font-size:13px;font-weight:600;margin-bottom:8px'},
+      `${assignments.length} crew member${assignments.length === 1 ? '' : 's'}:`));
+    const list = h('div',{style:'max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg)'});
+    assignments.forEach(a => {
+      const row = h('div',{style:'padding:5px 8px;font-size:12px;border-bottom:1px solid var(--border)'});
+      const name = `${a.worker_first_name || ''} ${a.worker_last_name || ''}`.trim() || a.worker_name || '(unnamed)';
+      row.append(h('strong',{}, name));
+      if (a.worker_role || a.classification) {
+        row.append(h('span',{style:'color:var(--text3);margin-left:8px'}, a.worker_role || a.classification));
+      }
+      list.append(row);
+    });
+    modal.append(list);
+  }
+
+  const actions = h('div',{style:'display:flex;justify-content:flex-end;margin-top:14px'});
+  actions.append(h('button',{className:'btn',onclick:()=>overlay.remove()},'Close'));
+  modal.append(actions);
+}
+
 async function showScheduleEditPopup(projectId, onSaved) {
   const overlay = h('div',{className:'modal-overlay'});
   const modal = h('div',{className:'modal',style:'max-width:520px'});

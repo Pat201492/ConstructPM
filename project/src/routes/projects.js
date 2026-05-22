@@ -355,6 +355,27 @@ router.get('/scheduled-list', authorize('projects:read'), async (req, res, next)
       for (const p of projects) {
         p.fully_staffed_dates = Array.from(byProject.get(p.id) || []);
       }
+
+      // Per-day worker counts so the Schedule tab card can render its
+      // "View Crew" button in the right colour (grey when 0, blue when
+      // >0). Single GROUP BY query covers every (project, work_date) in
+      // the visible window — no N+1. Result shape per project:
+      //   p.assignment_counts = { 'YYYY-MM-DD': N, ... }
+      const counts = await db('worker_assignments')
+        .whereIn('project_id', ids)
+        .whereBetween('work_date', [from, to])
+        .select('project_id', 'work_date')
+        .count('* as n')
+        .groupBy('project_id', 'work_date');
+      const cByProject = new Map();
+      for (const r of counts) {
+        const key = ymd(r.work_date);
+        if (!cByProject.has(r.project_id)) cByProject.set(r.project_id, {});
+        cByProject.get(r.project_id)[key] = parseInt(r.n, 10) || 0;
+      }
+      for (const p of projects) {
+        p.assignment_counts = cByProject.get(p.id) || {};
+      }
     }
 
     res.json({ projects });
