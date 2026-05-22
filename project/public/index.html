@@ -1154,18 +1154,22 @@ function renderForceChangePassword(root) {
   box.append(form);
   root.append(box);
   $('#fp-btn').onclick = async () => {
+    const btn = $('#fp-btn');
+    if (btn.disabled) return; // guard rapid double-click race
     const cur = $('#fp-current').value;
     const np = $('#fp-new').value;
     const cf = $('#fp-confirm').value;
     if (!cur) return $('#fp-error').textContent = 'Enter your current password';
     if (np.length < 8) return $('#fp-error').textContent = 'New password must be at least 8 characters';
     if (np !== cf) return $('#fp-error').textContent = 'New passwords do not match';
+    btn.disabled = true;
     try {
       await api('/auth/change-password', {method:'POST', body: JSON.stringify({currentPassword: cur, newPassword: np})});
       if (S.user) S.user.must_change_password = false;
       navigate('dashboard');
     } catch (e) {
       $('#fp-error').textContent = e.message;
+      btn.disabled = false;
     }
   };
   $('#fp-logout').onclick = () => logout();

@@ -303,12 +303,15 @@ function renderForceChangePassword() {
   const err = wrap.querySelector('[data-err]');
   form.onsubmit = async (e) => {
     e.preventDefault();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn.disabled) return; // guard rapid double-tap race
     err.textContent = '';
     const cur = wrap.querySelector('#fp-current').value;
     const np = wrap.querySelector('#fp-new').value;
     const cf = wrap.querySelector('#fp-confirm').value;
     if (np.length < 8) { err.textContent = 'New password must be at least 8 characters'; return; }
     if (np !== cf) { err.textContent = 'New passwords do not match'; return; }
+    submitBtn.disabled = true;
     try {
       await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword: cur, newPassword: np }) });
       if (session.user) session.user.must_change_password = false;
@@ -317,6 +320,7 @@ function renderForceChangePassword() {
       startBadgePoll();
     } catch (ex) {
       err.textContent = ex.message || 'Save failed';
+      submitBtn.disabled = false;
     }
   };
   wrap.querySelector('[data-logout]').onclick = () => { logout(); render(); };
