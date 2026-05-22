@@ -7476,7 +7476,8 @@ async function renderExports(main) {
     rightPanel.append(list);
 
     const actions = h('div',{style:'display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap'});
-    actions.append(h('button',{className:'btn',onclick:doDownload},'Download CSV'));
+    actions.append(h('button',{className:'btn',onclick:() => doDownload('csv')},'Download CSV'));
+    actions.append(h('button',{className:'btn',onclick:() => doDownload('xlsx')},'Download Excel'));
     actions.append(h('button',{className:'btn-outline',onclick:doPreview},'Preview'));
     actions.append(h('button',{className:'btn-outline',title:'Open the scheduled-export builder pre-filled with the current source + selected columns',onclick:()=>{
       if (!selectedSource || selectedColumns.length === 0) return alert('Pick a source and columns first');
@@ -7642,10 +7643,10 @@ async function renderExports(main) {
     }
   }
 
-  async function doDownload() {
+  async function doDownload(format = 'csv') {
     if (!selectedSource || selectedColumns.length === 0) return alert('Select a source and columns');
     try {
-      const resp = await fetch('/api/exports/builder/download',{method:'POST',
+      const resp = await fetch('/api/exports/builder/download?format=' + encodeURIComponent(format), {method:'POST',
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.token},
         body:JSON.stringify({
           source:selectedSource, columns:selectedColumns,
@@ -7654,11 +7655,18 @@ async function renderExports(main) {
             end_date: readDateInput(endInput) || undefined,
           },
         })});
+      if (!resp.ok) {
+        // Surface server-side validation (unknown format, missing source, etc.)
+        // instead of letting the failure return a non-CSV/XLSX blob that
+        // looks like a corrupt download.
+        const txt = await resp.text();
+        throw new Error('Download failed: ' + (txt || resp.status));
+      }
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = selectedSource + '_export_' + new Date().toISOString().split('T')[0] + '.csv';
+      a.download = selectedSource + '_export_' + new Date().toISOString().split('T')[0] + '.' + format;
       document.body.append(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (e) { alert(e.message); }
@@ -8141,6 +8149,26 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
   emailWrap.append(h('p',{style:'color:var(--text3);font-size:11px;margin:6px 0 0'},
     'Variables resolved at send time: {{name}}, {{source}}, {{rowCount}}, {{whenUtc}}. Leave subject/body blank to use the system default.'));
 
+  // Attachment formats — multi-select. One email per format is sent so
+  // recipients can pick the file they want. Defaults to Excel for new
+  // rows; existing rows round-trip their saved selection.
+  const initialFormatsBuilder = (Array.isArray(initial.export_formats) && initial.export_formats.length > 0)
+    ? new Set(initial.export_formats.filter(f => ['csv','xlsx','pdf'].includes(f)))
+    : new Set(['xlsx']);
+  const fmtBoxesBuilder = {};
+  emailWrap.append(h('label',{style:'display:block;font-size:12px;color:var(--text2);margin:10px 0 2px'},'Attachment formats'));
+  const fmtRow = h('div',{style:'display:flex;gap:14px;align-items:center;font-size:12px'});
+  [['csv','CSV'],['xlsx','Excel'],['pdf','PDF (coming in PR #46)']].forEach(([k,lbl]) => {
+    const box = h('label',{style:'display:inline-flex;align-items:center;gap:4px;cursor:pointer'});
+    const cb = h('input',{type:'checkbox',style:'width:auto'});
+    cb.checked = initialFormatsBuilder.has(k);
+    if (k === 'pdf') { cb.disabled = true; cb.checked = false; box.style.opacity = '0.5'; }
+    fmtBoxesBuilder[k] = cb;
+    box.append(cb); box.append(document.createTextNode(lbl));
+    fmtRow.append(box);
+  });
+  emailWrap.append(fmtRow);
+
   modal.append(emailWrap);
 
   // ── Enabled toggle + actions ──────────────────────────────
@@ -8161,6 +8189,12 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
     if (freqMode === 'weekly' && dows.length === 0) return alert('Pick at least one day of the week (or switch to Manual)');
     if (freqMode === 'custom' && !customCron) return alert('Enter a cron expression (or switch to Manual)');
 
+    // Read selected attachment formats. Falls back to ['csv'] so the
+    // server-side validator's "at least one of csv/xlsx/pdf" rule never
+    // trips on a row the user un-checked everything from.
+    const chosenFormatsBuilder = ['csv','xlsx','pdf'].filter(f => fmtBoxesBuilder[f] && fmtBoxesBuilder[f].checked);
+    if (chosenFormatsBuilder.length === 0) return alert('Pick at least one attachment format');
+
     const payload = {
       name,
       source: chosenSource,
@@ -8172,13 +8206,13 @@ function showScheduledExportBuilder({ mode, existing, prefillSource, prefillColu
       email_subject: subjInp.value.trim() || null,
       email_body_html: bodyTA.value.trim() || null,
       email_body_text: null,
+      export_formats: chosenFormatsBuilder,
     };
     // On create, force the simple (no-fanout) path so the row matches the
     // shape the builder UI represents. On edit, leave fan-out fields alone
     // so a row originally built in the older modal isn't silently rewritten.
     if (mode !== 'edit') {
       payload.fanout_mode = 'none';
-      payload.export_formats = ['csv'];
     }
     try {
       if (mode === 'edit') {
