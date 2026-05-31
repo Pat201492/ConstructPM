@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
@@ -8,12 +9,25 @@ const db = require('../config/database');
 
 const router = express.Router();
 
+// Throttle unauthenticated auth endpoints (login, refresh, password-reset)
+// to blunt credential-stuffing and token/brute-force. Keyed per IP. Disabled
+// under NODE_ENV=test so the suite isn't rate-limited. Tune via env if needed.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'test' ? 0 : Number(process.env.AUTH_RATE_LIMIT || 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { error: 'Too many requests', message: 'Too many attempts. Please try again later.' },
+});
+
 /**
  * POST /api/auth/login
  * Authenticate a user and return access + refresh tokens
  */
 router.post(
   '/login',
+  authLimiter,
   [
     body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
     body('password').notEmpty().withMessage('Password required'),
@@ -101,6 +115,7 @@ router.post(
  */
 router.post(
   '/refresh',
+  authLimiter,
   [body('refreshToken').notEmpty().withMessage('Refresh token required')],
   async (req, res, next) => {
     try {
@@ -319,6 +334,7 @@ router.post(
  */
 router.post(
   '/reset-password/verify',
+  authLimiter,
   [body('token').notEmpty().withMessage('token required')],
   async (req, res, next) => {
     try {
@@ -361,6 +377,7 @@ router.post(
  */
 router.post(
   '/reset-password',
+  authLimiter,
   [
     body('token').notEmpty().withMessage('token required'),
     body('newPassword').isLength({ min: 8 }).withMessage('newPassword must be at least 8 characters'),

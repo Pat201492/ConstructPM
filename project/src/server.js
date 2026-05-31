@@ -66,7 +66,7 @@ async function start() {
             is_superadmin: true,
             notification_preferences: JSON.stringify({ in_app: true, email: true, push: true }),
           });
-          console.log(`[SUPERADMIN] Created ${target} (password: ChangeMe123!)`);
+          console.log(`[SUPERADMIN] Created ${target} (must change password on first login)`);
         }
       }
     } catch (err) {

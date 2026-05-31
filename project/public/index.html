@@ -169,7 +169,9 @@ async function apiUpload(path, formData) {
   if (S.token) h['Authorization'] = 'Bearer ' + S.token;
   const r = await fetch('/api'+path, {method:'POST', headers:h, body:formData});
   if (r.status === 401) { logout(); return null; }
-  return r.json();
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || data.message || 'Upload failed');
+  return data;
 }
 
 function $(sel,ctx=document){return ctx.querySelector(sel)}
