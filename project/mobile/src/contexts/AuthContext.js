@@ -6,6 +6,19 @@ import { api, saveTokens, clearTokens, loadTokens, setAuthFailHandler } from '..
 
 const AuthContext = createContext(null);
 
+// /auth/login returns the user with camelCase name fields (firstName/lastName),
+// while /auth/me returns the full snake_case DB row. Screens read snake_case
+// (user.first_name / user.last_name), so normalize both entry points to that
+// shape to keep the contract consistent.
+function normalizeUser(u) {
+  if (!u) return u;
+  return {
+    ...u,
+    first_name: u.first_name ?? u.firstName,
+    last_name: u.last_name ?? u.lastName,
+  };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -25,7 +38,7 @@ export function AuthProvider({ children }) {
       await loadTokens();
       try {
         const data = await api('/auth/me');
-        setUser(data.user || data);
+        setUser(normalizeUser(data.user || data));
       } catch { /* no valid session */ }
       setLoading(false);
     })();
@@ -36,11 +49,12 @@ export function AuthProvider({ children }) {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    await saveTokens(data.access_token, data.refresh_token);
-    setUser(data.user);
+    await saveTokens(data.accessToken, data.refreshToken);
+    const u = normalizeUser(data.user);
+    setUser(u);
     // Register push token
     registerPushToken();
-    return data.user;
+    return u;
   };
 
   const registerPushToken = async () => {

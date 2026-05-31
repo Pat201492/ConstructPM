@@ -39,7 +39,7 @@ App at `http://localhost:3000`. Admin: `admin@company.com` / `ChangeMe123!`
 - `HANDOFF_PACKAGE.md` — full project doc (read this for full context)
 - `docs/TERMINOLOGY.md` — glossary (use this when terminology questions arise)
 - `docs/FUTURE_REFINEMENTS/` — 5 deferred-feature design docs (refinements 01-05)
-- `migrations/` — 16 files, run in order at boot
+- `migrations/` — 68 files, run in filename order at boot. A few share a numeric prefix (e.g. two `20260517_001_*`); Knex keys off the full filename, so each runs once in deterministic lexical order — harmless, do not rename already-applied migrations.
 - `public/index.html` — single-file SPA, no build step
 - `src/services/PdfStampService.js` — adds platform number stamps to filed PDFs
 
@@ -60,4 +60,4 @@ See `migrations/20260505_002a_enum_additions.js` for the pattern.
 
 ## Build state
 
-34/34 tests passing · 1 skipped (storage backend files don't exist as separate modules — pre-existing tech debt) · Latest tarball deploys cleanly through all 16 migrations
+34/34 tests passing · 1 skipped (storage backend files don't exist as separate modules — pre-existing tech debt) · Latest tarball deploys cleanly through all 68 migrations

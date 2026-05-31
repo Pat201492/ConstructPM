@@ -521,22 +521,45 @@ const NotificationService = {
    * Deliver push notification via Firebase Cloud Messaging
    */
   async _deliverPush(userId, notification) {
-    if (!process.env.FIREBASE_PROJECT_ID) {
-      console.log(`[NotificationService] PUSH (dev): User: ${userId} | ${notification.title}`);
+    // Mobile registers Expo push tokens (ExponentPushToken[...]) via
+    // POST /users/me/device — stored in user_devices.device_token. Deliver
+    // through Expo's push service (https://exp.host); no Firebase project or
+    // SDK is needed. Node 20 provides global fetch.
+    const tokens = await db('user_devices')
+      .where({ user_id: userId })
+      .pluck('device_token')
+      .catch(() => []);
+
+    const valid = tokens.filter(
+      (t) => typeof t === 'string' && t.startsWith('ExponentPushToken')
+    );
+    if (valid.length === 0) {
+      console.log(`[NotificationService] PUSH: no Expo tokens for user ${userId}`);
       return;
     }
 
-    // In production, you'd use firebase-admin SDK here
-    // This requires storing FCM device tokens per user (a separate table)
-    const tokens = await db('user_devices')
-      .where({ user_id: userId })
-      .pluck('fcm_token')
-      .catch(() => []);
+    const messages = valid.map((to) => ({
+      to,
+      title: notification.title,
+      body: notification.body || '',
+      data: {
+        notification_id: notification.id,
+        type: notification.type,
+        action_url: notification.action_url,
+        reference_type: notification.reference_type,
+        reference_id: notification.reference_id,
+      },
+    }));
 
-    if (tokens.length === 0) return;
-
-    // Firebase Admin SDK call would go here
-    console.log(`[NotificationService] Would send push to ${tokens.length} device(s) for user ${userId}`);
+    const resp = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(messages),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Expo push ${resp.status}: ${text}`);
+    }
   },
 
   // ─── QUERY METHODS ────────────────────────────────────────

@@ -1,3 +1,7 @@
+> ⚠️ **LEGACY / ARCHIVED COPY.** This file is byte-identical to
+> `PROJECT_REFERENCE.md`, which is the canonical reference. Kept only as an
+> archived snapshot — edit `PROJECT_REFERENCE.md` instead.
+
 # Construction PM Platform — Complete Reference
 
 > Single source of truth. Upload this at the start of any future conversation.
