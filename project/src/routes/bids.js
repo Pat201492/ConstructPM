@@ -49,6 +49,34 @@ async function resolveBidVisibility(user) {
   return userAccess.bid_visibility || roleConfig?.bid_visibility || 'own';
 }
 
+// Per-bid access scope applied to EVERY /:id route below (read AND write).
+// authenticate (router.use above) has already set req.user; this param
+// callback fires before the route handlers. A user with 'own'/'assigned'
+// visibility may only touch bids they're tied to — otherwise 404 (don't
+// confirm the id exists). Mirrors the list endpoint's resolveBidVisibility
+// rule. authorize(...) still runs after this and enforces the permission.
+// The loaded bid is cached on req.bid so handlers needn't re-fetch.
+router.param('id', async (req, res, next, id) => {
+  try {
+    const bid = await Bid.findById(id);
+    if (!bid) return res.status(404).json({ error: 'Bid not found' });
+
+    const visibility = await resolveBidVisibility(req.user);
+    let allowed = visibility === 'all';
+    if (!allowed && visibility === 'own') {
+      allowed = bid.estimator_id === req.user.id || bid.assigned_pm_id === req.user.id;
+    } else if (!allowed && visibility === 'assigned') {
+      allowed = !!(await db('bid_assignments')
+        .where({ bid_id: bid.id, user_id: req.user.id })
+        .first());
+    }
+    if (!allowed) return res.status(404).json({ error: 'Bid not found' });
+
+    req.bid = bid;
+    next();
+  } catch (err) { next(err); }
+});
+
 router.get('/', authorize('bids:read'), async (req, res, next) => {
   try {
     const { status, customer_id, location_id, search, limit, offset, pm_id } = req.query;
@@ -117,30 +145,8 @@ router.get('/stats', authorize('bids:read'), async (req, res, next) => {
 
 router.get('/:id', authorize('bids:read'), async (req, res, next) => {
   try {
-    const bid = await Bid.findById(req.params.id);
-    if (!bid) return res.status(404).json({ error: 'Bid not found' });
-
-    // Scope to the caller's bid visibility — the SAME rule the list endpoint
-    // applies (resolveBidVisibility). Without this, a user with 'own' or
-    // 'assigned' visibility could read ANY bid by guessing its id (IDOR).
-    // Return 404 (not 403) on a miss so we don't confirm the id exists.
-    const visibility = await resolveBidVisibility(req.user);
-    if (visibility === 'none') {
-      return res.status(404).json({ error: 'Bid not found' });
-    }
-    if (visibility === 'own') {
-      if (bid.estimator_id !== req.user.id && bid.assigned_pm_id !== req.user.id) {
-        return res.status(404).json({ error: 'Bid not found' });
-      }
-    } else if (visibility === 'assigned') {
-      const assigned = await db('bid_assignments')
-        .where({ bid_id: bid.id, user_id: req.user.id })
-        .first();
-      if (!assigned) return res.status(404).json({ error: 'Bid not found' });
-    }
-    // 'all' → no per-bid restriction.
-
-    // Include quote lines
+    // req.bid was loaded + visibility-scoped by router.param('id') above.
+    const bid = req.bid;
     const quoteLines = await BidQuoteLine.findByBid(bid.id);
     const totals = await BidQuoteLine.getTotals(bid.id);
 
