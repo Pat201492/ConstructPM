@@ -25,7 +25,9 @@ function authenticate(req, res, next) {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Pin the algorithm so a token can't dictate verification (defense in
+    // depth — jsonwebtoken@9 already rejects alg:none with a secret present).
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     req.user = {
       id: decoded.id,
       email: decoded.email,

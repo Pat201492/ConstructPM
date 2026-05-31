@@ -35,6 +35,11 @@ const financialsRoutes = require('./routes/financials');
 
 const app = express();
 
+// Behind nginx in prod (one hop) — trust it so req.ip is the real client
+// address. Required for correct per-IP rate limiting; without it every
+// request looks like it comes from the proxy.
+app.set('trust proxy', 1);
+
 // ── SECURITY & PARSING ────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: false,
