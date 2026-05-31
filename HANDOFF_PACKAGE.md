@@ -33,7 +33,7 @@ Bids join one customer with one location. Won bids become projects. Projects rol
 | Frontend (`public/index.html`) | ~5,200 lines |
 | Database tables | 41 |
 | Database enums | 14 |
-| Migrations | 16 |
+| Migrations | 68 |
 | API endpoints | 214 |
 | Models | 13+ |
 | Services | 13 (added `PdfStampService` this session) |
@@ -370,7 +370,7 @@ project/
 │   ├── index.html                  # ~5,200-line vanilla JS SPA (no build step)
 │   └── display.html                # Standalone shop floor kiosk
 │
-├── migrations/                     # 16 files, must run in order
+├── migrations/                     # 68 files, run in filename order
 ├── seeds/
 │   ├── 001_admin_user.js           # admin@company.com / ChangeMe123!
 │   └── 002_test_data.js            # Full test dataset (customers, projects, invoices, POs, etc.)

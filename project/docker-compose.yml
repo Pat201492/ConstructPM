@@ -119,5 +119,38 @@ services:
         node src/server.js
       "
 
+  # ── Test runner ──────────────────────────────────────────────
+  # Not started by `docker compose up` (guarded behind the `test` profile).
+  # Run the suite with:
+  #   docker compose --profile test run --rm test
+  # Mounts the source, installs devDeps (jest etc. — the api image is built
+  # --omit=dev), creates/migrates the test DB, then runs jest.
+  test:
+    image: node:20-alpine
+    container_name: constructpm_test
+    profiles: ["test"]
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: test
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      TEST_DB_NAME: construct_mgr_test
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+        echo 'Installing dependencies (incl devDeps)...' &&
+        npm install --no-save --no-audit --no-fund &&
+        echo 'Ensuring test database exists...' &&
+        node -e \"const {Client}=require('pg');(async()=>{const c=new Client({host:'db',user:'postgres',password:'postgres',database:'postgres'});await c.connect();await c.query('CREATE DATABASE construct_mgr_test').catch(e=>{if(e.code!=='42P04')throw e;});await c.end();console.log('  test db ready');})();\" &&
+        echo 'Running jest...' &&
+        npx jest --runInBand
+      "
+
 volumes:
   pgdata:

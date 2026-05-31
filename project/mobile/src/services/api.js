@@ -1,11 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
 
-// Set this to your server URL
-// Dev: http://192.168.x.x:3000 (your computer's local IP)
-// Prod: https://your-domain.com
-const BASE_URL = __DEV__
-  ? 'http://192.168.1.100:3000' // ← Change to your dev machine IP
-  : 'https://your-production-server.com';
+// API base URL. Set per build profile via EXPO_PUBLIC_API_URL (see eas.json
+// `env` blocks). Expo inlines EXPO_PUBLIC_* at build time. When running
+// `expo start` locally with no env set, falls back to the LAN dev IP below —
+// change it to your dev machine's IP.
+const BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  (__DEV__ ? 'http://192.168.1.100:3000' : 'https://your-production-server.com');
 
 let _accessToken = null;
 let _refreshToken = null;
@@ -39,12 +40,12 @@ async function refreshAccessToken() {
   const resp = await fetch(`${BASE_URL}/api/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: _refreshToken }),
+    body: JSON.stringify({ refreshToken: _refreshToken }),
   });
   if (!resp.ok) throw new Error('Refresh failed');
   const data = await resp.json();
-  await saveTokens(data.access_token, data.refresh_token || _refreshToken);
-  return data.access_token;
+  await saveTokens(data.accessToken, data.refreshToken || _refreshToken);
+  return data.accessToken;
 }
 
 /**

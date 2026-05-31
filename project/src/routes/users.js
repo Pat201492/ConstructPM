@@ -414,23 +414,27 @@ router.post('/me/device', async (req, res, next) => {
     const { push_token, platform, device_name } = req.body;
     if (!push_token) return res.status(400).json({ error: 'push_token required' });
 
+    // The mobile client sends the Expo token as `push_token`; the schema
+    // column is `device_token` (see migration 20260410_001). Map it here.
     // Upsert: if this token already exists for this user, update it; otherwise insert
     const existing = await db('user_devices')
-      .where({ user_id: req.user.id, push_token })
+      .where({ user_id: req.user.id, device_token: push_token })
       .first();
 
     if (existing) {
       await db('user_devices').where('id', existing.id).update({
         platform: platform || existing.platform,
         device_name: device_name || existing.device_name,
+        last_used_at: db.fn.now(),
         updated_at: db.fn.now(),
       });
     } else {
       await db('user_devices').insert({
         user_id: req.user.id,
-        push_token,
+        device_token: push_token,
         platform: platform || 'unknown',
         device_name: device_name || 'Unknown',
+        last_used_at: db.fn.now(),
       });
     }
 
