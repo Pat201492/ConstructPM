@@ -172,7 +172,11 @@ router.get('/download', authorize('files:download'), async (req, res, next) => {
     const LocalBackend = require('../services/storage/LocalBackend');
     const storageRoot = path.resolve(await LocalBackend.getBase());
     const fullPath = path.resolve(fileRef.startsWith('/') ? fileRef : path.join(storageRoot, fileRef));
-    if (!fullPath.startsWith(storageRoot)) return res.status(403).json({ error: 'Access denied' });
+    // Require an exact match or a path UNDER storageRoot (with separator) so a
+    // sibling like `/app/storage-evil` can't pass a bare prefix check.
+    if (fullPath !== storageRoot && !fullPath.startsWith(storageRoot + path.sep)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     try { await fs.access(fullPath); } catch { return res.status(404).json({ error: 'File not found' }); }
 
