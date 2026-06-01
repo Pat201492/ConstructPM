@@ -36,6 +36,32 @@ function ymd(v) {
 const router = express.Router();
 router.use(authenticate);
 
+// Per-project access scope, applied to EVERY /:id route (read AND write) so
+// the detail endpoint's rule can't be bypassed via a subroute. Mirrors the
+// GET /:id check: PMs only their own projects, field/shop only assigned ones;
+// admin/estimator/accounting/scheduler unrestricted (existing design). 403 on
+// a miss, 404 if the project doesn't exist. Loaded project cached on
+// req.project. authorize(...) still runs afterward and enforces the permission.
+router.param('id', async (req, res, next, id) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(404).json({ error: 'Not found' });
+    const project = await Project.findById(id);
+    if (!project) return res.status(404).json({ error: 'Not found' });
+
+    if (req.user.role === ROLES.PROJECT_MANAGER && project.pm_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if ([ROLES.FIELD_STAFF, ROLES.SHOP_STAFF].includes(req.user.role)) {
+      if (!(await Project.isAssigned(project.id, req.user.id))) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
+    req.project = project;
+    next();
+  } catch (err) { next(err); }
+});
+
 // Helper: resolve project visibility for current user
 async function resolveProjectVisibility(user) {
   const roleConfig = await db('role_configurations').where('role_name', user.role).first();

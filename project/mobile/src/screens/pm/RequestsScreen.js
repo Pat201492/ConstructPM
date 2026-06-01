@@ -62,7 +62,7 @@ function CreateRequest({ onDone }) {
     (async () => {
       try {
         const d = await api(`/projects/${projectId}/team`);
-        const team = (d.assignments || []).filter(a => a.role === 'field_staff').map(a => ({ value: a.user_id, label: `${a.first_name} ${a.last_name}` }));
+        const team = (d.assignments || []).filter(a => a.role === 'field_staff').map(a => ({ value: a.user_id, label: a.user_name || a.email }));
         setForemen(team);
       } catch {}
     })();

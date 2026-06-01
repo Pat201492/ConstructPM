@@ -36,7 +36,7 @@ export default function QuickBidScreen() {
       const data = await api('/bids', { method: 'POST', body: JSON.stringify({
         customer_id: customerId,
         location_id: locationId,
-        contact_id: contactId || null,
+        customer_contact_id: contactId || null,
         project_scope: scope.trim(),
       }) });
       setCreated(data.bid || data);
