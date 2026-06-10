@@ -1,0 +1,11 @@
+item_name,category,sku,quantity,unit,min_stock,unit_cost,location,supplier_phone,last_audit_date,bin_color
+12 AWG THHN Wire (500ft),Wire,WIRE-12THHN-500,42,spool,10,89.50,Shop A - Rack 1,800-555-0101,2026-04-15,Blue
+1/2" EMT Conduit,Conduit,EMT-050-10FT,310,stick,50,4.25,Shop A - Rack 3,800-555-0102,2026-04-15,Green
+20A Single Pole Breaker,Breakers,BRK-20A-SP,18,each,25,12.75,Shop B - Bin 7,800-555-0103,2026-03-30,Red
+4" Square Junction Box,Boxes,BOX-4SQ,140,each,40,3.10,Shop A - Bin 12,800-555-0104,2026-04-15,Yellow
+Wire Nuts (Red),Connectors,CONN-WN-RED,8,box,15,6.40,Shop B - Bin 2,800-555-0105,2026-02-20,Red
+LED High Bay 150W,Fixtures,FIX-LED-HB150,22,each,8,118.00,Shop C - Shelf 4,800-555-0106,2026-04-01,White
+3/4" Liquidtight,Conduit,LT-075-25FT,15,roll,10,42.00,Shop A - Rack 5,800-555-0107,2026-04-15,Green
+GFCI Receptacle 20A,Devices,DEV-GFCI-20,9,each,20,18.90,Shop B - Bin 9,800-555-0108,2026-03-12,Orange
+Fish Tape 100ft,Tools,TOOL-FT-100,6,each,5,34.50,Shop A - Tool Crib,800-555-0109,2026-01-28,Black
+Mineral Insulated Cable,Wire,WIRE-MI-250,3,spool,5,460.00,Shop C - Rack 9,800-555-0110,2026-04-15,Blue

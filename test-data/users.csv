@@ -1,0 +1,11 @@
+email,first_name,last_name,initials,role,pm_code,phone,on_schedule,password,department,hire_date,emergency_contact
+tony.marino@testco.com,Tony,Marino,TM,project_manager,TM,201-555-0301,true,,Operations,2024-03-01,Maria Marino 201-555-9301
+dana.singh@testco.com,Dana,Singh,DS,estimator,,201-555-0302,false,,Preconstruction,2023-07-12,Raj Singh 201-555-9302
+phil.okafor@testco.com,Phil,Okafor,PO,project_manager,PO,201-555-0303,true,,Operations,2022-11-20,Ada Okafor 201-555-9303
+lena.cruz@testco.com,Lena,Cruz,LC,accounting,,201-555-0304,false,,Finance,2025-01-15,Sam Cruz 201-555-9304
+marcus.webb@testco.com,Marcus,Webb,MW,shop_staff,,201-555-0305,true,,Warehouse,2024-09-09,Tia Webb 201-555-9305
+ray.donovan@testco.com,Ray,Donovan,RD,field_staff,,201-555-0306,true,,Field,2023-04-04,Kim Donovan 201-555-9306
+sofia.reyes@testco.com,Sofia,Reyes,SR,scheduler,,201-555-0307,false,,Operations,2025-02-28,Luis Reyes 201-555-9307
+greg.tan@testco.com,Greg,Tan,GT,field_staff,,201-555-0308,true,,Field,2022-06-17,Mei Tan 201-555-9308
+nina.patel@testco.com,Nina,Patel,NP,project_manager,NP,201-555-0309,true,,Operations,2024-12-01,Dev Patel 201-555-9309
+omar.haddad@testco.com,Omar,Haddad,OH,field_staff,,201-555-0310,true,,Field,2023-10-22,Lily Haddad 201-555-9310
