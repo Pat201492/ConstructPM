@@ -6,6 +6,7 @@ const User = require('../models/User');
 const AuthService = require('../services/AuthService');
 const authenticate = require('../middleware/authenticate');
 const db = require('../config/database');
+const NotificationService = require('../services/NotificationService');
 
 const router = express.Router();
 
@@ -529,5 +530,127 @@ router.get('/dev-users', async (req, res) => {
     res.status(500).json({ error: 'Dev user list unavailable' });
   }
 });
+
+/**
+ * POST /api/auth/forgot-password
+ * Self-service reset request. Body: { email }
+ * Always responds 200 with a generic message (no account enumeration). On a
+ * real active account: generate a 6-digit code, store its bcrypt hash in
+ * password_resets (15-min expiry), invalidate prior codes, and email the code.
+ */
+router.post(
+  '/forgot-password',
+  authLimiter,
+  [body('email').isEmail().normalizeEmail()],
+  async (req, res, next) => {
+    const generic = { message: 'If an account exists for that email, a reset code has been sent.' };
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'A valid email is required' });
+
+      const user = await User.findByEmail(req.body.email);
+      if (!user || !user.active) return res.json(generic); // never reveal existence
+
+      const crypto = require('crypto');
+      const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+      const code_hash = await bcrypt.hash(code, 10);
+      const expires_at = new Date(Date.now() + 15 * 60 * 1000);
+
+      // Invalidate any prior un-used codes so only the newest one works.
+      await db('password_resets')
+        .where({ user_id: user.id, used_at: null })
+        .update({ used_at: db.fn.now() });
+
+      await db('password_resets').insert({
+        user_id: user.id,
+        token_hash: code_hash,
+        expires_at,
+        delivery_method: 'email_code',
+        client_ip: req.ip,
+        attempts: 0,
+      });
+
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto">
+          <h2 style="color:#1F4E79">ConstructPM password reset</h2>
+          <p>Use this code to reset your password. It expires in 15 minutes.</p>
+          <p style="font-size:32px;font-weight:bold;letter-spacing:6px;background:#f2f5f9;padding:16px;text-align:center;border-radius:6px">${code}</p>
+          <p style="color:#666;font-size:13px">If you didn't request this, you can ignore this email — your password won't change.</p>
+        </div>`;
+      await NotificationService.sendEmail({
+        to: user.email,
+        subject: 'Your ConstructPM password reset code',
+        html,
+        text: `Your ConstructPM password reset code is ${code}. It expires in 15 minutes.`,
+      }).catch((err) => console.error('[forgot-password] email send failed:', err.message));
+
+      // Dev-only convenience so the code can be tested without inbox access.
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[forgot-password] DEV code for ${user.email}: ${code}`);
+      }
+
+      res.json(generic);
+    } catch (err) { next(err); }
+  }
+);
+
+/**
+ * POST /api/auth/reset-password-code
+ * Body: { email, code, newPassword }
+ * Verify the 6-digit code and set a new password. Generic errors (no
+ * enumeration); locks the code after 10 wrong attempts.
+ */
+router.post(
+  '/reset-password-code',
+  authLimiter,
+  [
+    body('email').isEmail().normalizeEmail(),
+    body('code').isLength({ min: 6, max: 6 }).withMessage('A 6-digit code is required'),
+    body('newPassword').isLength({ min: 8 }).withMessage('New password must be at least 8 characters'),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation error', details: errors.array() });
+
+      const { email, code, newPassword } = req.body;
+      const user = await User.findByEmail(email);
+      if (!user || !user.active) return res.status(400).json({ error: 'Invalid or expired code' });
+
+      const reset = await db('password_resets')
+        .where({ user_id: user.id, used_at: null })
+        .where('expires_at', '>', new Date())
+        .orderBy('created_at', 'desc')
+        .first();
+      if (!reset) return res.status(400).json({ error: 'Invalid or expired code' });
+
+      if (reset.attempts >= 10) {
+        await db('password_resets').where({ id: reset.id }).update({ used_at: db.fn.now() });
+        return res.status(400).json({ error: 'Too many attempts. Please request a new code.' });
+      }
+
+      const match = await bcrypt.compare(code, reset.token_hash);
+      if (!match) {
+        await db('password_resets').where({ id: reset.id }).increment('attempts', 1);
+        return res.status(400).json({ error: 'Invalid or expired code' });
+      }
+
+      await db.transaction(async (trx) => {
+        const password_hash = await bcrypt.hash(newPassword, 12);
+        await trx('users').where({ id: user.id }).update({
+          password_hash,
+          must_change_password: false,
+          updated_at: trx.fn.now(),
+        });
+        await trx('password_resets').where({ id: reset.id }).update({ used_at: trx.fn.now() });
+      });
+
+      // Sign out existing sessions — a reset should invalidate old tokens.
+      await AuthService.revokeAllUserTokens(user.id).catch(() => {});
+
+      res.json({ success: true, message: 'Password updated. You can now log in.' });
+    } catch (err) { next(err); }
+  }
+);
 
 module.exports = router;

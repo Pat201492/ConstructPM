@@ -1145,7 +1145,8 @@ function renderLogin(root) {
   form.innerHTML=`<h1>ConstructPM</h1><p>Construction Project Management</p>
     <div class="form-group"><label>Email</label><input type="email" id="login-email" value="admin@company.com"></div>
     <div class="form-group"><label>Password</label><input type="password" id="login-pass" value="ChangeMe123!"></div>
-    <button class="btn" id="login-btn">Sign In</button><div id="login-error" class="error"></div>`;
+    <button class="btn" id="login-btn">Sign In</button><div id="login-error" class="error"></div>
+    <div style="text-align:center;margin-top:14px"><a href="#" id="forgot-link" style="color:var(--primary);font-size:13px;text-decoration:none">Forgot your password?</a></div>`;
   box.append(form);
   root.append(box);
   $('#login-btn').onclick=async()=>{
@@ -1153,6 +1154,66 @@ function renderLogin(root) {
     catch(e){$('#login-error').textContent=e.message}
   };
   $('#login-pass').onkeydown=e=>{if(e.key==='Enter')$('#login-btn').click()};
+  $('#forgot-link').onclick=(e)=>{e.preventDefault();root.innerHTML='';renderForgotPassword(root);};
+}
+
+// Self-service "forgot password" — request a 6-digit code by email, then
+// enter the code + a new password. Backend: POST /auth/forgot-password then
+// POST /auth/reset-password-code. No account enumeration (generic responses).
+function renderForgotPassword(root) {
+  const box=h('div',{className:'login-page'});
+  const form=h('div',{className:'login-box'});
+  form.innerHTML=`<h1>Reset password</h1><p>Enter your email and we'll send a 6-digit reset code.</p>
+    <div class="form-group"><label>Email</label><input type="email" id="fpc-email" placeholder="you@company.com"></div>
+    <button class="btn" id="fpc-send">Send code</button>
+    <div id="fpc-step2" style="display:none;margin-top:16px">
+      <div class="form-group"><label>6-digit code</label><input id="fpc-code" inputmode="numeric" maxlength="6" placeholder="123456"></div>
+      <div class="form-group"><label>New password</label><input type="password" id="fpc-new" placeholder="Min 8 characters"></div>
+      <div class="form-group"><label>Confirm new password</label><input type="password" id="fpc-confirm"></div>
+      <button class="btn" id="fpc-reset">Reset password</button>
+    </div>
+    <div id="fpc-msg" style="color:var(--text2);font-size:13px;margin-top:10px"></div>
+    <div id="fpc-error" class="error"></div>
+    <div style="text-align:center;margin-top:14px"><a href="#" id="fpc-back" style="color:var(--primary);font-size:13px;text-decoration:none">← Back to login</a></div>`;
+  box.append(form); root.append(box);
+
+  $('#fpc-back').onclick=(e)=>{e.preventDefault();root.innerHTML='';renderLogin(root);};
+
+  $('#fpc-send').onclick=async()=>{
+    $('#fpc-error').textContent=''; $('#fpc-msg').textContent='';
+    const email=$('#fpc-email').value.trim();
+    if(!email) return $('#fpc-error').textContent='Enter your email';
+    const btn=$('#fpc-send'); btn.disabled=true;
+    try{
+      const r=await fetch('/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.error||'Request failed');
+      $('#fpc-msg').textContent=d.message||'If an account exists, a code was sent.';
+      $('#fpc-step2').style.display='block';
+      $('#fpc-code').focus();
+    }catch(e){$('#fpc-error').textContent=e.message}
+    btn.disabled=false;
+  };
+
+  $('#fpc-reset').onclick=async()=>{
+    $('#fpc-error').textContent='';
+    const email=$('#fpc-email').value.trim();
+    const code=$('#fpc-code').value.trim();
+    const np=$('#fpc-new').value, cf=$('#fpc-confirm').value;
+    if(code.length!==6) return $('#fpc-error').textContent='Enter the 6-digit code';
+    if(np.length<8) return $('#fpc-error').textContent='New password must be at least 8 characters';
+    if(np!==cf) return $('#fpc-error').textContent='Passwords do not match';
+    const btn=$('#fpc-reset'); btn.disabled=true;
+    try{
+      const r=await fetch('/api/auth/reset-password-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,code,newPassword:np})});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.error||'Reset failed');
+      root.innerHTML=''; renderLogin(root);
+      $('#login-email').value=email;
+      $('#login-error').style.color='var(--green)';
+      $('#login-error').textContent='Password updated. Sign in with your new password.';
+    }catch(e){$('#fpc-error').textContent=e.message; btn.disabled=false;}
+  };
 }
 
 // Forced password reset on first login. Same shell as the login page so
