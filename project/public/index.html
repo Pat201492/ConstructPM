@@ -9770,6 +9770,84 @@ async function renderSuperadmin(main) {
   const c = h('div');
   main.append(c);
   await superadminFeatureToggles(c);
+
+  const ts = h('div',{style:'margin-top:36px'});
+  main.append(ts);
+  await superadminTimesheets(ts);
+}
+
+// Superadmin-only filterable view of every timesheet entry across all
+// projects. Uses GET /timesheets (admin role is unscoped) with worker /
+// project / date filters.
+async function superadminTimesheets(t) {
+  t.innerHTML = '<h2 style="margin-bottom:6px">Timesheets</h2>';
+  t.append(h('p',{style:'color:var(--text2);font-size:13px;margin-bottom:14px'},
+    'Filter and review timesheet entries across every project.'));
+
+  let projects = [];
+  try { const pr = await api('/projects?limit=500'); projects = pr.projects || []; } catch {}
+
+  const field = (label, el) => {
+    const d = h('div');
+    d.append(h('label',{style:'display:block;font-size:11px;color:var(--text3);margin-bottom:2px'}, label));
+    d.append(el);
+    return d;
+  };
+  const workerIn = h('input',{placeholder:'Worker name',style:'max-width:180px'});
+  const projSel = h('select',{style:'max-width:240px'});
+  projSel.append(h('option',{value:''},'All projects'));
+  projects.forEach(p => projSel.append(h('option',{value:p.id}, p.name)));
+  const startIn = h('input',{type:'date',style:'max-width:160px'});
+  const endIn = h('input',{type:'date',style:'max-width:160px'});
+  const applyBtn = h('button',{className:'btn'},'Filter');
+
+  const bar = h('div',{style:'display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px'});
+  bar.append(field('Worker',workerIn), field('Project',projSel), field('From',startIn), field('To',endIn), field(' ',applyBtn));
+  t.append(bar);
+
+  const results = h('div');
+  t.append(results);
+
+  async function load() {
+    results.innerHTML = '<p style="color:var(--text2)">Loading…</p>';
+    const qs = new URLSearchParams();
+    if (workerIn.value.trim()) qs.set('worker_name', workerIn.value.trim());
+    if (projSel.value) qs.set('project_id', projSel.value);
+    if (startIn.value) qs.set('start_date', startIn.value);
+    if (endIn.value) qs.set('end_date', endIn.value);
+    qs.set('limit','500');
+    try {
+      const d = await api('/timesheets?' + qs.toString());
+      const rows = d.timesheets || [];
+      results.innerHTML = '';
+      results.append(h('div',{style:'color:var(--text2);font-size:12px;margin-bottom:8px'},
+        rows.length + ' entr' + (rows.length === 1 ? 'y' : 'ies') + ' shown' + (rows.length === 500 ? ' (capped at 500 — narrow the filter)' : '')));
+      if (rows.length === 0) {
+        results.append(h('div',{style:'background:var(--bg3);padding:16px;border-radius:6px;color:var(--text2)'},'No timesheets match.'));
+        return;
+      }
+      const tbl = h('table');
+      tbl.innerHTML = '<thead><tr><th>Date</th><th>Worker</th><th>Classification</th><th>Project</th><th>ST</th><th>OT</th><th>DT</th><th>Revenue</th></tr></thead>';
+      const tb = h('tbody');
+      const td = (v) => { const c = h('td'); c.append(document.createTextNode(v == null ? '' : String(v))); return c; };
+      rows.forEach(r => {
+        const tr = h('tr');
+        tr.append(td(String(r.work_date || '').slice(0,10)), td(r.worker_name), td(r.classification), td(r.project_name),
+          td(r.st_hours), td(r.ot_hours), td(r.dt_hours),
+          td(r.potential_revenue != null ? '$' + Number(r.potential_revenue).toFixed(2) : ''));
+        tb.append(tr);
+      });
+      tbl.append(tb);
+      results.append(tbl);
+    } catch (e) {
+      results.innerHTML = '';
+      results.append(h('div',{style:'color:var(--red)'},'Could not load timesheets: ' + e.message));
+    }
+  }
+  applyBtn.onclick = load;
+  projSel.onchange = load;
+  [workerIn, startIn, endIn].forEach(el => el.onkeydown = (e) => { if (e.key === 'Enter') load(); });
+  await load();
 }
 
 async function superadminFeatureToggles(c) {
