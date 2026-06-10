@@ -1011,6 +1011,21 @@ async function checkAuth() {
 // ═══════════════════════════════════════════════════════════
 function navigate(page, params={}) { S.page=page; S.params=params; render(); }
 
+// Roles that have no web workflow — they're served by the mobile app only.
+const MOBILE_ONLY_ROLES = ['field_staff'];
+
+// Full-screen "use the mobile app" page for mobile-only roles. No sidebar,
+// no Settings — just a message and a Sign out button.
+function renderMobileOnly(root) {
+  const box=h('div',{className:'login-page'});
+  const card=h('div',{className:'login-box',style:'text-align:center'});
+  card.innerHTML=`<h1>📱 Mobile app only</h1>
+    <p>This account is set up for field use in the <strong>ConstructPM mobile app</strong>. The web dashboard isn't available for your role — please use the app to view your work, submit field notes, and scan equipment.</p>
+    <button class="btn" id="mo-logout">Sign out</button>`;
+  box.append(card); root.append(box);
+  $('#mo-logout').onclick=logout;
+}
+
 async function render() {
   const root=$('#root');
   root.innerHTML='';
@@ -1022,6 +1037,13 @@ async function render() {
   // navigations. A user mid-session is free to keep using the app.
   if (S.page === 'force-change-password') {
     return renderForceChangePassword(root);
+  }
+
+  // Mobile-only roles (field staff) have no web workflow — show a "use the
+  // app" screen instead of an empty shell + Settings tab. Gated here, before
+  // the sidebar/main are built, so none of the role tabs render.
+  if (MOBILE_ONLY_ROLES.includes(S.user?.role)) {
+    return renderMobileOnly(root);
   }
 
   // Update unread count
