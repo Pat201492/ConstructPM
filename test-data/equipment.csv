@@ -1,0 +1,11 @@
+barcode_id,equipment_name,manufacturer,equipment_type,certification_date,serial_number,notes,purchase_price,warranty_expiry
+EQ-100001,Scissor Lift 26ft,Genie,Lift,2026-01-10,GS2632-88412,Annual cert due Jan 2027,18500,2028-01-10
+EQ-100002,Generator 7kW,Honda,Generator,2025-11-05,EU7000-22910,Runs on propane/gas,4200,2027-11-05
+EQ-100003,Hammer Drill,Milwaukee,Power Tool,,M18-FUEL-7741,No cert required,329,2027-06-01
+EQ-100004,Boom Lift 45ft,JLG,Lift,2026-02-18,JLG450AJ-33120,"Inspect outriggers, hyd leak watch",62000,2029-02-18
+EQ-100005,Wire Puller 8000lb,Greenlee,Puller,2025-12-01,G6805-55101,Cable grip kit included,7800,2027-12-01
+EQ-100006,Transformer Cart,Custom,Cart,,CART-XF-009,Shop-built,950,
+EQ-100007,Thermal Camera,FLIR,Diagnostic,2026-03-22,FLIR-E8-77620,Calibrate yearly,3100,2028-03-22
+EQ-100008,Pipe Bender 2in,Klein,Bender,,KB-2IN-44012,Manual,540,2027-09-15
+EQ-100009,Arc Flash Suit 40cal,Salisbury,PPE,2026-01-30,AFK-40-12003,Cert + inspection logged,1450,2027-01-30
+EQ-100010,Trench Box 8ft,Trench Tech,Safety,2026-02-01,TT-8FT-66109,Shoring rated 20ft depth,9800,2030-02-01

@@ -1,0 +1,11 @@
+name,street,town,state,zip,local_union,miles_from_hq,location_code,square_footage,parking_notes,site_phone
+Waterfront Condo Tower,30 Hudson St,Jersey City,NJ,07302,Local 164,18.3,JC-WF-01,240000,Garage level P2,201-555-0142
+Newark Public Library Annex,5 Washington St,Newark,NJ,07102,Local 164,12.7,NWK-LIB-02,86000,Street only,973-555-0188
+Paramus High School,99 E Century Rd,Paramus,NJ,07652,Local 102,9.1,BRG-HS-03,310000,North lot,201-555-0190
+Liberty Towers Lobby,33 Hudson St,Jersey City,NJ,07302,Local 164,18.5,JC-LT-04,15000,Valet only,201-555-0111
+Port Authority Substation,4 World Trade Center,New York,NY,10007,Local 3,31.2,PA-SUB-05,42000,No on-site parking,212-555-0177
+Hoboken Terminal Retail,1 Hudson Pl,Hoboken,NJ,07030,Local 164,20.0,HOB-TRM-06,28000,Permit lot B,201-555-0166
+Bergen Med Center Wing C,230 E Ridgewood Ave,Paramus,NJ,07652,Local 102,8.4,BRG-MED-07,175000,Visitor deck,201-555-0155
+Jersey City PS-14,153 Wegman Pkwy,Jersey City,NJ,07305,Local 164,21.6,JC-PS14-08,64000,Rear lot,201-555-0133
+Newark Penn Concourse,1 Raymond Plaza W,Newark,NJ,07102,Local 164,11.9,NWK-PEN-09,54000,No parking,973-555-0144
+Edgewater Marina Bldg,1200 River Rd,Edgewater,NJ,07020,Local 164,15.0,EDG-MAR-10,38000,Dock lot,201-555-0122

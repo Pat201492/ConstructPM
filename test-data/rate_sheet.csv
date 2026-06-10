@@ -1,0 +1,11 @@
+local_union,classification,st_rate,ot_rate,dt_rate,effective_year,fringe_rate
+Local 164,Journeyman Wireman,72.50,108.75,145.00,2026,38.20
+Local 164,Foreman,79.75,119.63,159.50,2026,38.20
+Local 164,General Foreman,85.50,128.25,171.00,2026,38.20
+Local 164,Apprentice 1st Year,32.63,48.94,65.25,2026,18.10
+Local 164,Apprentice 3rd Year,47.13,70.69,94.25,2026,24.55
+Local 102,Journeyman Wireman,71.00,106.50,142.00,2026,37.40
+Local 102,Foreman,78.10,117.15,156.20,2026,37.40
+Local 3,Journeyman Wireman,76.25,114.38,152.50,2026,41.05
+Local 3,Foreman,83.88,125.81,167.75,2026,41.05
+Local 102,Apprentice 2nd Year,39.05,58.58,78.10,2026,21.30

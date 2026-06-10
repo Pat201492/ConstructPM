@@ -1,0 +1,11 @@
+name,billing_street,billing_town,billing_state,billing_zip,account_rep,credit_rating,legacy_system_id
+Gilbane Building Company,7 Jackson Walkway,Providence,RI,02903,J. Halloran,A+,LEG-1001
+Turner Construction,375 Hudson St,New York,NY,10014,M. Ruiz,A,LEG-1002
+"Skanska USA, Inc.",350 5th Ave,New York,NY,10118,K. Patel,A-,LEG-1003
+Hudson Waterfront Partners,30 Hudson St,Jersey City,NJ,07302,J. Halloran,B+,LEG-1004
+DeSimone Consulting,140 Broadway,New York,NY,10005,T. Nguyen,B,LEG-1005
+Bergen County Schools,540 Forest Ave,Paramus,NJ,07652,M. Ruiz,A,LEG-1006
+"Liberty Towers, LLC",33 Hudson St,Jersey City,NJ,07302,K. Patel,B+,LEG-1007
+Port Authority NY/NJ,4 World Trade Center,New York,NY,10007,J. Halloran,A+,LEG-1008
+Newark Housing Authority,500 Broad St,Newark,NJ,07102,T. Nguyen,B-,LEG-1009
+Hoboken Redevelopment,94 Washington St,Hoboken,NJ,07030,M. Ruiz,B,LEG-1010
