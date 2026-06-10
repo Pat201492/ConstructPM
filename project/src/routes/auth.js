@@ -598,7 +598,7 @@ router.post(
  * POST /api/auth/reset-password-code
  * Body: { email, code, newPassword }
  * Verify the 6-digit code and set a new password. Generic errors (no
- * enumeration); locks the code after 5 wrong attempts.
+ * enumeration); locks the code after 10 wrong attempts.
  */
 router.post(
   '/reset-password-code',
@@ -624,7 +624,7 @@ router.post(
         .first();
       if (!reset) return res.status(400).json({ error: 'Invalid or expired code' });
 
-      if (reset.attempts >= 5) {
+      if (reset.attempts >= 10) {
         await db('password_resets').where({ id: reset.id }).update({ used_at: db.fn.now() });
         return res.status(400).json({ error: 'Too many attempts. Please request a new code.' });
       }
