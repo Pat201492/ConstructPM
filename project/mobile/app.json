@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0F1923"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.constructpm.mobile",
@@ -26,7 +28,9 @@
         "backgroundColor": "#0F1923"
       },
       "package": "com.constructpm.mobile",
-      "permissions": ["CAMERA"]
+      "permissions": [
+        "CAMERA"
+      ]
     },
     "plugins": [
       "expo-camera",
@@ -38,7 +42,8 @@
           "icon": "./assets/notification-icon.png",
           "color": "#3B82F6"
         }
-      ]
+      ],
+      "expo-asset"
     ]
   }
 }

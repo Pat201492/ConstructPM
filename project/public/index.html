@@ -631,6 +631,9 @@ function fmtRefDoc(platformNumber, externalRef) {
 // ═══════════════════════════════════════════════════════════
 async function login(email, pass) {
   const data = await api('/auth/login',{method:'POST',body:JSON.stringify({email,password:pass})});
+  // api() returns null on a 401 (bad credentials) after auto-logout — guard it
+  // so the form shows a clean message instead of crashing on data.accessToken.
+  if (!data) throw new Error('Invalid email or password.');
   S.token=data.accessToken; S.user=data.user; S.allowedTabs=data.allowed_tabs||[];
   S.features = data.features || {};
   S.isSuperadmin = !!data.is_superadmin;
@@ -1233,7 +1236,7 @@ function renderForceChangePassword(root) {
     <div class="form-group"><label>New password</label><input type="password" id="fp-new" placeholder="Min 8 characters"></div>
     <div class="form-group"><label>Confirm new password</label><input type="password" id="fp-confirm"></div>
     <button class="btn" id="fp-btn">Save new password</button>
-    <button class="btn-outline" id="fp-logout" style="margin-left:8px">Sign out</button>
+    <button class="btn-outline" id="fp-logout">Sign out</button>
     <div id="fp-error" class="error"></div>`;
   box.append(form);
   root.append(box);
