@@ -67,13 +67,10 @@ const TEST_USERS = {
 
 const TEST_CUSTOMER = {
   name: 'Test Customer Inc',
-  contact_name: 'John Doe',
-  email: 'john@testcustomer.com',
-  phone: '555-0100',
-  address: '123 Test St',
-  city: 'Testville',
-  state: 'NJ',
-  zip: '07001',
+  billing_street: '123 Test St',
+  billing_town: 'Testville',
+  billing_state: 'NJ',
+  billing_zip: '07001',
 };
 
 // Stored IDs after seeding
@@ -84,6 +81,12 @@ async function setupTestDb() {
 
   // Run migrations
   await db.migrate.latest();
+
+  // Start from a clean slate — a persistent test DB volume (e.g. the
+  // docker-compose `test` profile, which reuses its Postgres volume
+  // across runs) may already hold data from a previous run. customers
+  // has no unique column to upsert against, so truncate first instead.
+  await truncateAll();
 
   // Seed test users
   const passwordHash = await bcrypt.hash('TestAdmin123!', 4); // Low rounds for speed
@@ -100,8 +103,6 @@ async function setupTestDb() {
         active: true,
         notification_preferences: JSON.stringify({ in_app: true, email: true, push: true }),
       })
-      .onConflict('email')
-      .merge()
       .returning('*');
 
     ids.users[key] = user.id;
@@ -110,8 +111,6 @@ async function setupTestDb() {
   // Seed test customer
   const [customer] = await db('customers')
     .insert(TEST_CUSTOMER)
-    .onConflict()
-    .merge()
     .returning('*');
 
   ids.customer = customer.id;
