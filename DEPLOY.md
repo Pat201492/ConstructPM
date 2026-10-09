@@ -51,6 +51,7 @@ nano .env.production
 # → Set DOMAIN to your domain (e.g., app.yourcompany.com)
 # → Secrets are already filled in by the step above
 # → Add ANTHROPIC_API_KEY if using Claude for AI
+# → Set SUPERADMIN_BOOTSTRAP_EMAIL to the superadmin's email (see below)
 
 # Get free SSL certificate
 ./deploy.sh ssl
@@ -111,6 +112,25 @@ ANTHROPIC_API_KEY=sk-ant-...your-key...
 ```
 
 The app uses Claude API for document extraction instead of local Ollama. Costs ~$3-15/month depending on usage.
+
+---
+
+## Superadmin Access
+
+On every boot the api re-syncs the superadmin grant from `SUPERADMIN_BOOTSTRAP_EMAIL`
+in `.env.production`:
+
+```
+SUPERADMIN_BOOTSTRAP_EMAIL=you@yourcompany.com
+```
+
+- Set to a user's email (case-insensitive): that user gets `is_superadmin`
+  on boot and every other user's grant is revoked. If the user doesn't exist
+  yet it's created at `ChangeMe123!` (change on first login).
+- **Leave it empty and ALL superadmin grants are revoked on boot** — this is
+  why the Superadmin tab can vanish after a redeploy. Keep the var set.
+
+After changing it, redeploy (`./deploy.sh update`), then log out and back in.
 
 ---
 
