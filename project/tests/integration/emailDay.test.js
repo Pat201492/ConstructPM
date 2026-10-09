@@ -96,6 +96,24 @@ async function ensureDayTemplate() {
     .merge();
 }
 
+// Seed the email_day_to_staff template with the project-run-span wording
+// (issue #68) so the default render path exercises {{project_start_date}}
+// and {{project_end_date}}. Mirrors the canonical default the migration
+// installs.
+async function ensureRunSpanTemplate() {
+  await db('email_templates')
+    .insert({
+      key: 'email_day_to_staff',
+      name: 'Scheduler — Email Day to Staff',
+      subject: 'Schedule: {{project_number}} on {{date}}',
+      body_html: "<p>You're on the crew for {{project_name}} ({{project_number}}) on {{date}}. The project runs from {{project_start_date}} to {{project_end_date}}.</p><p>{{day_notes}}</p>",
+      body_text: "You're on the crew for {{project_name}} ({{project_number}}) on {{date}}. The project runs from {{project_start_date}} to {{project_end_date}}.\n{{day_notes}}",
+      variables: JSON.stringify([]),
+    })
+    .onConflict('key')
+    .merge();
+}
+
 beforeAll(async () => {
   const s = await setupSuite();
   app = s.app;
@@ -234,6 +252,42 @@ describe('POST /api/projects/:id/email-day — default path', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(addrs(spy.mock.calls[0][0].to)).toEqual(['crewb@test.com']);
     expect(addrs(spy.mock.calls[0][0].cc)).toEqual([]);
+  });
+});
+
+describe('POST /api/projects/:id/email-day — project run span (issue #68)', () => {
+  test('default render states the clicked day and the project run span', async () => {
+    await ensureRunSpanTemplate();
+
+    const pmId = getIds().users.pm;
+    const projectId = await makeProject(pmId);
+    // 2026-06-01 is a Monday; 5 working days (M–F) ends Fri 2026-06-05.
+    await db('projects').where('id', projectId).update({
+      start_date: '2026-06-01',
+      project_length_days: 5,
+    });
+
+    const clicked = '2026-06-03'; // Wed, within the run
+    const w1 = await makeWorker('crewRun@test.com');
+    await assign(projectId, w1, clicked);
+
+    const spy = jest.spyOn(NotificationService, 'sendEmail');
+
+    const res = await request(app)
+      .post(`/api/projects/${projectId}/email-day`)
+      .set('Authorization', await authHeader(app, 'admin'))
+      .send({ date: clicked });
+
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    const html = String(spy.mock.calls[0][0].html);
+    expect(html).toContain(clicked);         // the single crew day
+    expect(html).toContain('runs from');
+    expect(html).toContain('2026-06-01');    // project start
+    expect(html).toContain('2026-06-05');    // computed end (Fri)
+    // Never the forbidden "on the crew from X to Y" phrasing.
+    expect(html).not.toContain('on the crew from');
   });
 });
 

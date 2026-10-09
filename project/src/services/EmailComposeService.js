@@ -29,6 +29,7 @@
  */
 
 const db = require('../config/database');
+const { computeEndDate, toYmd } = require('./projectDates');
 
 const EmailComposeService = {
   async getCatalog(context, ids = {}) {
@@ -73,7 +74,7 @@ async function emailDayLookups(ids) {
   // Parallel: PM + 4 entity joins + project numbers + crew + day note. Each
   // is a single-row PK/composite lookup so the total wall-clock is ~one
   // round-trip. Resists race conditions because nothing here writes.
-  const [pm, customer, location, customer_contact, site_contact, all_numbers, crew, dayNoteRow] = await Promise.all([
+  const [pm, customer, location, customer_contact, site_contact, all_numbers, crew, dayNoteRow, schedule_overrides] = await Promise.all([
     project.pm_id ? db('users').where('id', project.pm_id).first(['first_name', 'last_name', 'email', 'initials']) : null,
     project.customer_id ? db('customers').where('id', project.customer_id).first() : null,
     project.location_id ? db('locations').where('id', project.location_id).first() : null,
@@ -85,9 +86,10 @@ async function emailDayLookups(ids) {
       .where({ 'wa.project_id': project_id, 'wa.work_date': date })
       .select('wa.worker_id', 'users.email', db.raw("users.first_name || ' ' || users.last_name as name")),
     db('project_day_notes').where({ project_id, work_date: date }).first(),
+    db('project_schedule_overrides').where({ project_id }).first(['works_saturday', 'works_sunday', 'weekend_only']),
   ]);
 
-  return { project, pm, customer, location, customer_contact, site_contact, all_numbers, crew, day_note: dayNoteRow?.notes || '' };
+  return { project, pm, customer, location, customer_contact, site_contact, all_numbers, crew, day_note: dayNoteRow?.notes || '', schedule_overrides };
 }
 
 function emailDayVarsFromLookups(L, date) {
@@ -164,6 +166,20 @@ function emailDayVarsFromLookups(L, date) {
   vars.crew_count = vars['crew.count'];
   vars.crew_names = vars['crew.names'];
   vars.day_notes = vars.day_note;
+
+  // Project run span for the "runs from <start> to <end>" line. End date
+  // is the start plus project_length_days WORKING days, honouring the
+  // per-project Sat/Sun/weekend-only overrides — same rule as the
+  // Schedule calendar. Formatted like `date` (plain YYYY-MM-DD).
+  vars.project_start_date = toYmd(L.project.start_date) || '';
+  vars.project_end_date = computeEndDate({
+    start_date: L.project.start_date,
+    end_date: L.project.end_date,
+    project_length_days: L.project.project_length_days,
+    works_saturday: L.schedule_overrides?.works_saturday,
+    works_sunday: L.schedule_overrides?.works_sunday,
+    weekend_only: L.schedule_overrides?.weekend_only,
+  }) || '';
 
   return vars;
 }

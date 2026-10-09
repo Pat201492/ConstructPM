@@ -15,6 +15,7 @@ const FileService = require('../services/FileService');
 const authenticate = require('../middleware/authenticate');
 const { authorize } = require('../middleware/authorize');
 const { ROLES } = require('../config/roles');
+const projectDates = require('../services/projectDates');
 
 const db = require('../config/database');
 
@@ -1285,6 +1286,13 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       .first();
     const primaryNumber = primaryRow?.number || project.name;
 
+    // Project run span for the "The project runs from <start> to <end>."
+    // line. End date is computed from start_date + project_length_days in
+    // WORKING days (honouring the per-project Sat/Sun/weekend-only
+    // overrides) — the same rule the Schedule calendar uses client-side.
+    const { start_date: projectStartDate, end_date: projectEndDate } =
+      await projectDates.getProjectDates(project.id, db);
+
     // Render the editable email_day_to_staff template once; reuse the
     // result for every worker. Day notes are the ONLY notes channel that
     // goes to the field — project notes are intentionally EXCLUDED
@@ -1294,6 +1302,8 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       project_name: project.name,
       location: project.address || '',
       date,
+      project_start_date: projectStartDate || '',
+      project_end_date: projectEndDate || '',
       crew_count: crew.length,
       crew_names: crew.map(c => c.name).filter(Boolean).join(', '),
       // Pre-formatted line so an empty day note doesn't produce a sad
