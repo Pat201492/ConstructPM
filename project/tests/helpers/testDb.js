@@ -67,13 +67,11 @@ const TEST_USERS = {
 
 const TEST_CUSTOMER = {
   name: 'Test Customer Inc',
-  contact_name: 'John Doe',
-  email: 'john@testcustomer.com',
-  phone: '555-0100',
-  address: '123 Test St',
-  city: 'Testville',
-  state: 'NJ',
-  zip: '07001',
+  billing_street: '123 Test St',
+  billing_town: 'Testville',
+  billing_state: 'NJ',
+  billing_zip: '07001',
+  active: true,
 };
 
 // Stored IDs after seeding
@@ -110,8 +108,6 @@ async function setupTestDb() {
   // Seed test customer
   const [customer] = await db('customers')
     .insert(TEST_CUSTOMER)
-    .onConflict()
-    .merge()
     .returning('*');
 
   ids.customer = customer.id;
