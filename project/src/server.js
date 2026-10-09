@@ -8,6 +8,7 @@ const db = require('./config/database');
 const FileWatcher = require('./services/FileWatcher');
 const DocumentQueue = require('./services/DocumentQueue');
 const NotificationService = require('./services/NotificationService');
+const { applySuperadminBootstrap } = require('./services/superadminBootstrap');
 
 const PORT = process.env.PORT || 3000;
 const ENABLE_FILE_WATCHER = process.env.ENABLE_FILE_WATCHER !== 'false';
@@ -25,50 +26,7 @@ async function start() {
     // env var in .env to grant a specific user (created at ChangeMe123!
     // if missing).
     try {
-      const target = (process.env.SUPERADMIN_BOOTSTRAP_EMAIL || '').trim().toLowerCase();
-      const currentGrants = await db('users').where('is_superadmin', true).select('email');
-      const grantedEmails = currentGrants.map(u => u.email.toLowerCase());
-
-      if (!target) {
-        if (grantedEmails.length > 0) {
-          await db('users').where('is_superadmin', true).update({ is_superadmin: false });
-          console.log(`[SUPERADMIN] Revoked from ${grantedEmails.length} user(s); none configured`);
-        } else {
-          console.log('[SUPERADMIN] None configured (set SUPERADMIN_BOOTSTRAP_EMAIL to opt-in)');
-        }
-      } else {
-        // Revoke everyone except target
-        const revoked = await db('users')
-          .where('is_superadmin', true)
-          .whereRaw('LOWER(email) != ?', [target])
-          .update({ is_superadmin: false });
-        if (revoked > 0) console.log(`[SUPERADMIN] Revoked from ${revoked} user(s) outside the target`);
-
-        const existing = await db('users').whereRaw('LOWER(email) = ?', [target]).first();
-        if (existing) {
-          if (!existing.is_superadmin) {
-            await db('users').where('id', existing.id).update({ is_superadmin: true });
-            console.log(`[SUPERADMIN] Granted to existing user ${target}`);
-          } else {
-            console.log(`[SUPERADMIN] ${target} (active)`);
-          }
-        } else {
-          const bcrypt = require('bcryptjs');
-          const password_hash = await bcrypt.hash('ChangeMe123!', 12);
-          await db('users').insert({
-            email: target,
-            password_hash,
-            first_name: 'Super',
-            last_name: 'Admin',
-            initials: 'SA',
-            role: 'admin',
-            active: true,
-            is_superadmin: true,
-            notification_preferences: JSON.stringify({ in_app: true, email: true, push: true }),
-          });
-          console.log(`[SUPERADMIN] Created ${target} (must change password on first login)`);
-        }
-      }
+      await applySuperadminBootstrap(db, process.env.SUPERADMIN_BOOTSTRAP_EMAIL);
     } catch (err) {
       console.error('[SUPERADMIN] Sync skipped:', err.message);
     }

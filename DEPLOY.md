@@ -51,6 +51,8 @@ nano .env.production
 # → Set DOMAIN to your domain (e.g., app.yourcompany.com)
 # → Secrets are already filled in by the step above
 # → Add ANTHROPIC_API_KEY if using Claude for AI
+# → Set SUPERADMIN_BOOTSTRAP_EMAIL to your login email, or every
+#   superadmin gets revoked on every restart (see .env.production.example)
 
 # Get free SSL certificate
 ./deploy.sh ssl
