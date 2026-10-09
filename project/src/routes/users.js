@@ -24,15 +24,22 @@ router.use(authenticate);
  *
  * Open to: admin, project_manager, estimator (the bid-creating roles).
  * Anyone else gets 403.
+ *
+ * ?include_admins=true also returns active admins. A project's pm_id may
+ * legitimately be an admin (the scheduler add-by-code dialog needs to
+ * offer them), so this opt-in flag widens the list without changing the
+ * default shape the bid-creation dropdowns already depend on.
  */
 router.get('/pms', async (req, res, next) => {
   try {
     if (!['admin', 'project_manager', 'estimator'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    const includeAdmins = ['1', 'true', 'yes'].includes(String(req.query.include_admins || '').toLowerCase());
+    const roles = includeAdmins ? ['project_manager', 'admin'] : ['project_manager'];
     const pms = await db('users')
-      .select('id', 'first_name', 'last_name', 'active')
-      .where('role', 'project_manager')
+      .select('id', 'first_name', 'last_name', 'role', 'active')
+      .whereIn('role', roles)
       .where('active', true)
       .orderBy('first_name');
     res.json({ users: pms });
