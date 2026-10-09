@@ -5610,13 +5610,22 @@ async function renderSchedule(main) {
     const isCurrentMonth = day.getMonth() === firstOfMonth.getMonth();
     const isToday = day.toDateString() === new Date().toDateString();
 
-    const cell = h('div',{style:`
+    const dayISO = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
+    const cell = h('div',{
+      title: 'Click to add a project to the schedule on this day',
+      style:`
       background:var(--bg2);
       min-height:90px;
       padding:4px;
+      cursor:pointer;
       opacity:${isCurrentMonth ? 1 : 0.45};
       ${isToday ? 'box-shadow:inset 0 0 0 2px var(--primary);' : ''}
     `});
+    // Clicking an empty area of the cell opens the "add project by code"
+    // popup prefilled with this day as the start date. Clicks that land on
+    // a project card stopPropagation (see below) so they open the edit
+    // popup instead of this one.
+    cell.onclick = () => showScheduleAddPopup(dayISO, () => { main.innerHTML=''; renderSchedule(main); });
     cell.append(h('div',{style:`font-size:11px;color:${isToday ? 'var(--primary)' : 'var(--text2)'};font-weight:${isToday ? 700 : 400};margin-bottom:2px`}, String(day.getDate())));
 
     projects.filter(p => projectOccupiesDay(p, day)).forEach(p => {
@@ -5659,7 +5668,7 @@ async function renderSchedule(main) {
         btn.onclick = (e) => e.stopPropagation();
       }
       card.append(btn);
-      card.onclick = () => showScheduleEditPopup(p.id, () => { main.innerHTML=''; renderSchedule(main); });
+      card.onclick = (e) => { e.stopPropagation(); showScheduleEditPopup(p.id, () => { main.innerHTML=''; renderSchedule(main); }); };
       cell.append(card);
     });
 
@@ -5881,6 +5890,190 @@ async function showScheduleEditPopup(projectId, onSaved) {
     } catch (err) { alert(err.message); }
   }},'Save'));
   modal.append(actions);
+}
+
+// Schedule "add a project by code" pop-up — opened by clicking an empty
+// area of a day cell on the Schedule tab calendar. Lets the user put a
+// project on the schedule by typing its code: an existing code pre-fills
+// its schedule fields, an unknown code reveals name + PM inputs and
+// creates the project. onSaved fires after a successful POST so the
+// calendar can refresh.
+//
+// Wraps the two #66 endpoints:
+//   GET  /api/scheduler/project-code/:code  — exact code lookup
+//   POST /api/scheduler/projects            — update-or-create
+async function showScheduleAddPopup(startISO, onSaved) {
+  const overlay = h('div',{className:'modal-overlay'});
+  const modal = h('div',{className:'modal',style:'max-width:480px'});
+
+  modal.append(h('h2',{},'Add project to schedule'));
+  modal.append(h('p',{style:'color:var(--text2);font-size:12px;margin-bottom:12px'},
+    'Type a project code. An existing code loads that project; an unknown code creates a new one.'));
+
+  // Project code
+  const codeInput = h('input',{id:'sa-code',placeholder:'e.g. PRJ-2026-100',autocomplete:'off'});
+  modal.append(h('div',{className:'form-group'},[ h('label',{},'Project code'), codeInput ]));
+
+  // Lookup status line — "Existing project: …" / "New project" / errors.
+  const statusLine = h('div',{style:'font-size:12px;margin:-4px 0 10px;min-height:16px;color:var(--text2)'});
+  modal.append(statusLine);
+
+  // Start date (prefilled with the clicked day), length, Sat/Sun.
+  const formGrid = h('div',{className:'form-grid'});
+  formGrid.append(h('div',{className:'form-group'},[
+    h('label',{},'Start date'),
+    makeDateInput({id:'sa-start', value: startISO || ''}),
+  ]));
+  formGrid.append(h('div',{className:'form-group'},[
+    h('label',{},'Length (working days)'),
+    h('input',{id:'sa-length', type:'number', min:'1', step:'1', value:'1'}),
+  ]));
+  modal.append(formGrid);
+
+  const satCb = h('input',{type:'checkbox',id:'sa-sat'});
+  const sunCb = h('input',{type:'checkbox',id:'sa-sun'});
+  const wdRow = h('div',{style:'display:flex;gap:16px;align-items:center;margin-top:4px'});
+  wdRow.append(h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ satCb, h('span',{},'Works Saturday') ]));
+  wdRow.append(h('label',{style:'display:flex;align-items:center;gap:6px;cursor:pointer'},[ sunCb, h('span',{},'Works Sunday') ]));
+  modal.append(wdRow);
+
+  // New-project fields — hidden until a lookup says the code is unknown.
+  const newWrap = h('div',{style:'display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)'});
+  const nameInput = h('input',{id:'sa-name',placeholder:'Project name'});
+  newWrap.append(h('div',{className:'form-group'},[ h('label',{},'Project name'), nameInput ]));
+  const pmSel = h('select',{id:'sa-pm'});
+  pmSel.append(h('option',{value:''},'Select PM…'));
+  newWrap.append(h('div',{className:'form-group'},[ h('label',{},'Project manager'), pmSel ]));
+  modal.append(newWrap);
+  // Load the PM list (project_manager + admin) once; cheap, cached by the
+  // browser. Failure leaves the dropdown with just the placeholder.
+  api('/users/pms?include_admins=true')
+    .then(r => { (r.users || []).forEach(u => pmSel.append(h('option',{value:u.id}, `${u.first_name} ${u.last_name}`))); })
+    .catch(() => {});
+
+  // Error banner (server-side 400/403/409) — shown without closing.
+  const errBox = h('div',{style:'display:none;color:var(--red, #c62828);font-size:12px;margin-top:12px'});
+  modal.append(errBox);
+
+  const actions = h('div',{style:'display:flex;gap:8px;justify-content:flex-end;margin-top:18px'});
+  const saveBtn = h('button',{className:'btn'},'Save');
+  actions.append(h('button',{className:'btn-outline',onclick:()=>overlay.remove()},'Cancel'));
+  actions.append(saveBtn);
+  modal.append(actions);
+
+  overlay.append(modal);
+  document.body.append(overlay);
+
+  // Lookup state. mode: 'empty' | 'existing' | 'new'. For 'new' we require
+  // name + PM before Save enables.
+  let mode = 'empty';
+  let lastLookedUp = null;
+
+  function updateSaveEnabled() {
+    let ok = !!codeInput.value.trim();
+    if (mode === 'new') ok = ok && !!nameInput.value.trim() && !!pmSel.value;
+    saveBtn.disabled = !ok;
+    saveBtn.style.opacity = ok ? '' : '0.5';
+    saveBtn.style.cursor = ok ? '' : 'not-allowed';
+  }
+
+  async function lookupCode() {
+    const code = codeInput.value.trim();
+    if (!code) {
+      mode = 'empty';
+      statusLine.textContent = '';
+      statusLine.style.color = 'var(--text2)';
+      newWrap.style.display = 'none';
+      lastLookedUp = null;
+      updateSaveEnabled();
+      return;
+    }
+    if (code === lastLookedUp) return; // avoid redundant calls on blur+debounce
+    lastLookedUp = code;
+    statusLine.style.color = 'var(--text2)';
+    statusLine.textContent = 'Checking…';
+    try {
+      const r = await api('/scheduler/project-code/' + encodeURIComponent(code));
+      // Guard against a stale response if the user kept typing.
+      if (codeInput.value.trim() !== code) return;
+      if (r.exists) {
+        mode = 'existing';
+        const p = r.project;
+        statusLine.style.color = 'var(--text)';
+        statusLine.textContent = `Existing project: ${p.name || '(unnamed)'} (PM ${p.pm_name || '—'})`;
+        newWrap.style.display = 'none';
+        // Prefill length / Sat / Sun from the project when set. Start date
+        // stays the day the user clicked — that's the point of clicking it.
+        if (p.project_length_days) $('#sa-length').value = p.project_length_days;
+        satCb.checked = !!p.works_saturday;
+        sunCb.checked = !!p.works_sunday;
+      } else {
+        mode = 'new';
+        statusLine.style.color = 'var(--text)';
+        statusLine.textContent = 'New project — enter a name and PM to create it.';
+        newWrap.style.display = '';
+      }
+    } catch (err) {
+      mode = 'empty';
+      statusLine.style.color = 'var(--red, #c62828)';
+      statusLine.textContent = 'Lookup failed: ' + err.message;
+      newWrap.style.display = 'none';
+      lastLookedUp = null;
+    }
+    updateSaveEnabled();
+  }
+
+  // Lookup on blur and on a debounced pause while typing.
+  let debounce;
+  codeInput.addEventListener('input', () => {
+    lastLookedUp = null; // any edit invalidates the prior result
+    updateSaveEnabled();
+    clearTimeout(debounce);
+    debounce = setTimeout(lookupCode, 500);
+  });
+  codeInput.addEventListener('blur', () => { clearTimeout(debounce); lookupCode(); });
+  nameInput.addEventListener('input', updateSaveEnabled);
+  pmSel.addEventListener('change', updateSaveEnabled);
+
+  saveBtn.onclick = async () => {
+    errBox.style.display = 'none';
+    const code = codeInput.value.trim();
+    const startDate = readDateInput($('#sa-start'));
+    const length = parseInt($('#sa-length').value, 10);
+    if (!code) { errBox.textContent = 'Project code is required.'; errBox.style.display = ''; return; }
+    if (!startDate) { errBox.textContent = 'A valid start date is required.'; errBox.style.display = ''; return; }
+    if (!Number.isInteger(length) || length < 1) { errBox.textContent = 'Length must be a whole number of 1 or more.'; errBox.style.display = ''; return; }
+
+    const payload = {
+      project_code: code,
+      start_date: startDate,
+      project_length_days: length,
+      works_saturday: satCb.checked,
+      works_sunday: sunCb.checked,
+    };
+    if (mode === 'new') {
+      const name = nameInput.value.trim();
+      if (!name) { errBox.textContent = 'Project name is required for a new code.'; errBox.style.display = ''; return; }
+      if (!pmSel.value) { errBox.textContent = 'A PM is required for a new code.'; errBox.style.display = ''; return; }
+      payload.name = name;
+      payload.pm_id = pmSel.value;
+    }
+
+    saveBtn.disabled = true;
+    try {
+      await api('/scheduler/projects', { method: 'POST', body: JSON.stringify(payload) });
+      overlay.remove();
+      if (onSaved) onSaved();
+    } catch (err) {
+      // 400 / 403 / 409 — keep the popup open and surface the message.
+      errBox.textContent = err.message;
+      errBox.style.display = '';
+      saveBtn.disabled = false;
+    }
+  };
+
+  updateSaveEnabled();
+  codeInput.focus();
 }
 
 // ═══════════════════════════════════════════════════════════
