@@ -1171,6 +1171,33 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
 
     const NotificationService = require('../services/NotificationService');
 
+    // The project PM is always CC'd on the day email so they have a copy
+    // of what went to the field. Resolved from projects.pm_id -> users.email;
+    // may be null (no PM set, or PM has no email) in which case we just
+    // don't add them and the send still succeeds.
+    const pmRow = project.pm_id
+      ? await db('users').where('id', project.pm_id).select('email').first()
+      : null;
+    const pmEmail = pmRow?.email || null;
+
+    // Build the final Cc list: the supplied extra_cc plus the PM, deduped
+    // against each other AND against `to` (case-insensitive) so no address
+    // — the PM's included — ever appears in both To and Cc, or twice in Cc.
+    const buildCc = (toList, extraCc) => {
+      const toSet = new Set(toList.map(e => String(e).trim().toLowerCase()).filter(Boolean));
+      const seen = new Set();
+      const out = [];
+      for (const addr of [...(extraCc || []), ...(pmEmail ? [pmEmail] : [])]) {
+        const trimmed = String(addr || '').trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (toSet.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        out.push(trimmed);
+      }
+      return out;
+    };
+
     // Compose path: any of override_{subject,body_html,to} or extra_cc is
     // present. Caller (the compose modal) already composed the final
     // text — we just resolve {{var}} tokens against live data and send.
@@ -1201,7 +1228,8 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       const toList = Array.isArray(override_to) && override_to.length > 0
         ? override_to
         : crew.map(c => c.email).filter(Boolean);
-      const ccList = Array.isArray(extra_cc) ? extra_cc : [];
+      // Merge the PM into extra_cc (deduped against to + each other).
+      const ccList = buildCc(toList, Array.isArray(extra_cc) ? extra_cc : []);
 
       // Still fan in-app notifications out to each assigned worker — they
       // should see the activity in their app even when the email recipient
@@ -1211,6 +1239,7 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       await Promise.all(crew.map(c =>
         NotificationService.send({
           userId: c.worker_id,
+          type: 'email_day',
           category: 'actionable',
           priority: 'normal',
           title: subject,
@@ -1277,42 +1306,45 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
     // when no override row exists.
     const rendered = await EmailTemplateService.render('email_day_to_staff', tplVars, req.user?.id || null);
 
-    // Fan-out to each worker. Two channels handled distinctly:
-    //   - in_app: NotificationService.send creates a notifications row +
-    //     does WebSocket push. Uses the plain-text body so the in-app
-    //     view doesn't render raw HTML.
-    //   - email: NotificationService.sendEmail sends the actual HTML body
-    //     (the template-rendered one). Requires us to have the worker's
-    //     email locally, hence the email column in the crew query above.
+    // In-app fan-out: still one notification per assigned worker, so each
+    // crew member sees the day in their app. Uses the plain-text body so the
+    // in-app view doesn't render raw HTML.
     await Promise.all(crew.map(c =>
-      (async () => {
-        try {
-          await NotificationService.send({
-            userId: c.worker_id,
-            category: 'actionable',
-            priority: 'normal',
-            title: rendered.subject,
-            body: rendered.text || '',
-            referenceType: 'project',
-            referenceId: project.id,
-            actionUrl: `/#/project-detail?id=${project.id}`,
-            channels: ['in_app'],
-          });
-          if (c.email) {
-            await NotificationService.sendEmail({
-              to: c.email,
-              subject: rendered.subject,
-              html: rendered.html,
-              text: rendered.text || undefined,
-            });
-          }
-        } catch (err) {
-          console.error('[email-day] worker', c.worker_id, err.message);
-        }
-      })()
+      NotificationService.send({
+        userId: c.worker_id,
+        type: 'email_day',
+        category: 'actionable',
+        priority: 'normal',
+        title: rendered.subject,
+        body: rendered.text || '',
+        referenceType: 'project',
+        referenceId: project.id,
+        actionUrl: `/#/project-detail?id=${project.id}`,
+        channels: ['in_app'],
+      }).catch(err => console.error('[email-day:in_app] worker', c.worker_id, err.message))
     ));
 
-    res.json({ sent_to: crew.length, date });
+    // Email: ONE message for the whole crew — every assigned worker's
+    // address in To (workers without an email are simply skipped), and the
+    // project PM always CC'd. Replaces the old per-worker email fan-out.
+    const toList = crew.map(c => c.email).filter(Boolean);
+    const ccList = buildCc(toList, []);
+    let emailResult = null;
+    if (toList.length > 0) {
+      emailResult = await NotificationService.sendEmail({
+        to: toList,
+        cc: ccList.length > 0 ? ccList : undefined,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text || undefined,
+      }).catch(err => {
+        console.error('[email-day] email send', err.message);
+        return null;
+      });
+    }
+    console.log(`[email-day] project=${project.id} date=${date} to=${toList.length} cc=${ccList.length} result=${emailResult?.provider || 'skipped'}`);
+
+    res.json({ sent_to: toList.length, cc: ccList.length, in_app_to: crew.length, date });
   } catch (err) {
     console.error('[email-day]', err.message);
     next(err);
