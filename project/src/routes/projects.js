@@ -33,6 +33,28 @@ function ymd(v) {
   return String(v).slice(0, 10);
 }
 
+// Merge cc candidates (e.g. project PM + extra_cc) into a deduplicated
+// list, case-insensitively excluding anything already present in `to` —
+// so a PM who's also on the crew (or already hand-added to extra_cc)
+// doesn't get the same address twice across to+cc.
+function mergeCc(toList, ...ccSources) {
+  const toLower = new Set(toList.map(e => String(e).toLowerCase()));
+  const seen = new Set();
+  const cc = [];
+  for (const src of ccSources) {
+    for (const raw of src || []) {
+      if (!raw) continue;
+      const email = String(raw).trim();
+      if (!email) continue;
+      const lower = email.toLowerCase();
+      if (toLower.has(lower) || seen.has(lower)) continue;
+      seen.add(lower);
+      cc.push(email);
+    }
+  }
+  return cc;
+}
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -1151,6 +1173,14 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       return res.status(403).json({ error: 'Forbidden' });
     }
 
+    // Project PM always rides CC on the day email (default + compose paths)
+    // so they see what crew/customer-facing recipients received, even when
+    // they didn't trigger the send themselves.
+    const pmUser = project.pm_id
+      ? await db('users').where('id', project.pm_id).first(['email'])
+      : null;
+    const pmEmail = pmUser?.email || null;
+
     // Pull crew + day note + project primary number for the message body.
     // `email` is added to the select so we can send the HTML body directly
     // via NotificationService.sendEmail (which doesn't do its own recipient
@@ -1175,9 +1205,8 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
     // present. Caller (the compose modal) already composed the final
     // text — we just resolve {{var}} tokens against live data and send.
     //
-    // Default path (no overrides): existing template-driven fan-out where
-    // each worker gets their own individual email rendered from the
-    // email_day_to_staff template. Unchanged from the pre-compose version.
+    // Default path (no overrides): template-driven, rendered once from
+    // email_day_to_staff and sent as ONE email to the whole crew (PM cc'd).
     const composed = !!(override_subject || override_body_html
       || (Array.isArray(override_to) && override_to.length > 0)
       || (Array.isArray(extra_cc) && extra_cc.length > 0));
@@ -1201,7 +1230,8 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
       const toList = Array.isArray(override_to) && override_to.length > 0
         ? override_to
         : crew.map(c => c.email).filter(Boolean);
-      const ccList = Array.isArray(extra_cc) ? extra_cc : [];
+      // PM always rides cc, merged with extra_cc and deduped against `to`.
+      const ccList = mergeCc(toList, Array.isArray(extra_cc) ? extra_cc : [], pmEmail ? [pmEmail] : []);
 
       // Still fan in-app notifications out to each assigned worker — they
       // should see the activity in their app even when the email recipient
@@ -1277,40 +1307,37 @@ router.post('/:id/email-day', authorize('projects:update'), async (req, res, nex
     // when no override row exists.
     const rendered = await EmailTemplateService.render('email_day_to_staff', tplVars, req.user?.id || null);
 
-    // Fan-out to each worker. Two channels handled distinctly:
-    //   - in_app: NotificationService.send creates a notifications row +
-    //     does WebSocket push. Uses the plain-text body so the in-app
-    //     view doesn't render raw HTML.
-    //   - email: NotificationService.sendEmail sends the actual HTML body
-    //     (the template-rendered one). Requires us to have the worker's
-    //     email locally, hence the email column in the crew query above.
+    // In-app notification per assigned worker — unchanged fan-out, one row
+    // + WebSocket push each. Uses the plain-text body so the in-app view
+    // doesn't render raw HTML.
     await Promise.all(crew.map(c =>
-      (async () => {
-        try {
-          await NotificationService.send({
-            userId: c.worker_id,
-            category: 'actionable',
-            priority: 'normal',
-            title: rendered.subject,
-            body: rendered.text || '',
-            referenceType: 'project',
-            referenceId: project.id,
-            actionUrl: `/#/project-detail?id=${project.id}`,
-            channels: ['in_app'],
-          });
-          if (c.email) {
-            await NotificationService.sendEmail({
-              to: c.email,
-              subject: rendered.subject,
-              html: rendered.html,
-              text: rendered.text || undefined,
-            });
-          }
-        } catch (err) {
-          console.error('[email-day] worker', c.worker_id, err.message);
-        }
-      })()
+      NotificationService.send({
+        userId: c.worker_id,
+        category: 'actionable',
+        priority: 'normal',
+        title: rendered.subject,
+        body: rendered.text || '',
+        referenceType: 'project',
+        referenceId: project.id,
+        actionUrl: `/#/project-detail?id=${project.id}`,
+        channels: ['in_app'],
+      }).catch(err => console.error('[email-day:in_app] worker', c.worker_id, err.message))
     ));
+
+    // Email: ONE message for the whole crew (not one-per-worker) — every
+    // assigned worker with an email address goes in `to`; the project PM
+    // always rides `cc`. Workers without an email are silently skipped
+    // (not an error — matches the pre-existing permissive "no crew" rule).
+    const toList = crew.map(c => c.email).filter(Boolean);
+    const ccList = mergeCc(toList, pmEmail ? [pmEmail] : []);
+    const emailResult = await NotificationService.sendEmail({
+      to: toList,
+      cc: ccList.length > 0 ? ccList : undefined,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text || undefined,
+    });
+    console.log(`[email-day] project=${project.id} date=${date} to=${toList.length} cc=${ccList.length} result=${emailResult?.provider || 'skipped'}`);
 
     res.json({ sent_to: crew.length, date });
   } catch (err) {

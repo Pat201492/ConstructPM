@@ -65,15 +65,16 @@ const TEST_USERS = {
   },
 };
 
+// Matches the current `customers` schema (migrations/20260410_001) — no
+// address/contact columns on the table itself; those live on
+// customer_contacts / the `contacts` table instead.
 const TEST_CUSTOMER = {
   name: 'Test Customer Inc',
-  contact_name: 'John Doe',
-  email: 'john@testcustomer.com',
-  phone: '555-0100',
-  address: '123 Test St',
-  city: 'Testville',
-  state: 'NJ',
-  zip: '07001',
+  billing_street: '123 Test St',
+  billing_town: 'Testville',
+  billing_state: 'NJ',
+  billing_zip: '07001',
+  billing_display_address: '123 Test St, Testville, NJ',
 };
 
 // Stored IDs after seeding
@@ -107,12 +108,10 @@ async function setupTestDb() {
     ids.users[key] = user.id;
   }
 
-  // Seed test customer
-  const [customer] = await db('customers')
-    .insert(TEST_CUSTOMER)
-    .onConflict()
-    .merge()
-    .returning('*');
+  // Seed test customer. `name` has no unique constraint to upsert on, so
+  // find-or-create instead.
+  const customer = await db('customers').where('name', TEST_CUSTOMER.name).first()
+    || (await db('customers').insert(TEST_CUSTOMER).returning('*'))[0];
 
   ids.customer = customer.id;
 
@@ -121,8 +120,12 @@ async function setupTestDb() {
 
 async function teardownTestDb() {
   if (db) {
-    // Drop all data but keep schema
-    await truncateAll();
+    // NOTE: deliberately does NOT truncateAll() here. `TRUNCATE ... CASCADE`
+    // on 'users'/'projects' also wipes any table that merely has an FK
+    // pointing at them — including migration-seeded reference data like
+    // email_templates (via its `updated_by` FK). Since knex_migrations
+    // isn't touched, those rows never come back on a later run against
+    // the same (persistent) test database. Just close the connection.
     await db.destroy();
     db = null;
   }
