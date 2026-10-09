@@ -30,6 +30,9 @@ services:
       OCR_BACKEND: ${OCR_BACKEND:-tesseract}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # Grants is_superadmin to this user on every boot and revokes it from
+      # everyone else. If unset/empty, ALL superadmin grants are revoked.
+      SUPERADMIN_BOOTSTRAP_EMAIL: ${SUPERADMIN_BOOTSTRAP_EMAIL:-}
     volumes:
       - app_storage:/app/storage
       - ./templates:/app/templates:ro
