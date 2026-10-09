@@ -65,15 +65,16 @@ const TEST_USERS = {
   },
 };
 
+// Column set matches the current `customers` schema (contact fields were
+// split out into customer_contacts, and address columns were renamed to
+// billing_*). Keep this in sync with the latest migrations.
 const TEST_CUSTOMER = {
   name: 'Test Customer Inc',
-  contact_name: 'John Doe',
-  email: 'john@testcustomer.com',
-  phone: '555-0100',
-  address: '123 Test St',
-  city: 'Testville',
-  state: 'NJ',
-  zip: '07001',
+  billing_street: '123 Test St',
+  billing_town: 'Testville',
+  billing_state: 'NJ',
+  billing_zip: '07001',
+  active: true,
 };
 
 // Stored IDs after seeding
@@ -107,11 +108,11 @@ async function setupTestDb() {
     ids.users[key] = user.id;
   }
 
-  // Seed test customer
+  // Seed test customer (fresh — avoid onConflict since customers has no
+  // natural unique key we rely on here).
+  await db('customers').where('name', TEST_CUSTOMER.name).del();
   const [customer] = await db('customers')
     .insert(TEST_CUSTOMER)
-    .onConflict()
-    .merge()
     .returning('*');
 
   ids.customer = customer.id;
