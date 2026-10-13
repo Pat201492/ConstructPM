@@ -1,9 +1,13 @@
 # ConstructPM v2 — Handoff Package
 
-> **Date:** May 2026
-> **Build status:** Functional, deployed in development. Latest tarball: `construction_pm_v2_fixed.tar.gz`
-> **For:** Pat (project owner), the firm receiving the platform, or any future developer continuing this work
-> **Use:** Upload this document at the start of any new conversation about this project to re-establish full context
+> **For:** Pat (project owner), the firm receiving the platform, or any future developer continuing this work.
+> **Use:** narrative handoff — build history, known debt, and the deployment runbook. For the authoritative architecture, metrics, and file inventory, see `PROJECT_REFERENCE.md`; for conventions, see `CLAUDE.md`.
+> **Note:** this is the single canonical handoff document. The earlier
+> `project/docs/HANDOFF.md` and `project/docs/HANDOFF_COMPLETE.md` (April 2026
+> planning snapshots) were retired; their current state is captured here and in
+> `PROJECT_REFERENCE.md`.
+> The §2 metrics below are a May-2026 snapshot and are no longer maintained —
+> treat `PROJECT_REFERENCE.md` §2 as the current counts.
 
 ---
 
@@ -213,7 +217,7 @@ We hit two bugs this session where my migrations referenced columns that didn't 
 - `role_configurations.role_name` is a string column, NOT the `user_role` enum — so inserting `'field_staff'` there is safe even before the enum value commits
 - `pending_extractions` uses lazy DB loading intentionally (avoids crashing the test suite which runs without DB) — don't "fix" it
 - Express route ordering matters: `/export` must be defined BEFORE `/:id` to avoid Express matching "export" as a UUID
-- StorageService references `LocalBackend.js` and `S3Backend.js` files that don't exist — the abstraction is in `StorageService.js` itself. The skipped storage test reflects this. Either extract the backends into separate files or update the require paths.
+- `StorageService.js` delegates to `src/services/storage/LocalBackend.js` and `S3Backend.js`. (These were extracted into real modules after this handoff was first written — the earlier "files don't exist" warning no longer applies, and `storageService.test.js` now runs.)
 
 ### Pre-deployment audit script
 
@@ -432,7 +436,7 @@ project/
 
 ## 15. Known issues / debt
 
-- **Storage backend files don't exist as separate modules.** `StorageService.js` references `./storage/LocalBackend` and `./storage/S3Backend` which were never extracted. The single `StorageService.js` does both jobs internally. The unit test for storage is skipped because of this. Pure tech debt; works fine at runtime.
+- **~~Storage backend files don't exist as separate modules.~~** Resolved: `src/services/storage/LocalBackend.js` and `S3Backend.js` are now real modules that `StorageService.js` delegates to, and `storageService.test.js` runs as part of the unit suite.
 - **Test suite doesn't cover migrations.** Migrations only get tested on real Postgres at boot. Several deploy iterations this session were caused by migration bugs that unit tests couldn't catch. Setting up an integration test harness against a real test DB would prevent this class of bug.
 - **Mobile app is partial.** Field staff can submit timesheets, oil samples, field notes. PM/admin can use mobile but the screens are limited. Equipment workflows on mobile are missing entirely (refinement 03).
 - **Google Maps integration is TODO.** `miles_from_hq` is entered manually because the API key wiring was never finished. Refinement-eligible.

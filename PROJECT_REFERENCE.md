@@ -1,8 +1,11 @@
 # Construction PM Platform — Complete Reference
 
-> Single source of truth. Upload this at the start of any future conversation.
-> Last updated: April 15, 2026
-> Build state: COMPLETE (0 stubs, 0 TODOs)
+> Authoritative reference for the platform. Start here (and with `CLAUDE.md`)
+> for "what exists and why." Pair with `HANDOFF_PACKAGE.md` for build history,
+> known debt, and the deployment runbook.
+> Metrics last reconciled against the tree: October 12, 2026.
+> Build state: actively developed. Counts below are measured from the repo, not
+> a point-in-time snapshot — re-measure if they look stale.
 
 ---
 
@@ -20,129 +23,116 @@ When a user types a new entity during bid creation, they click "+" to expand an 
 
 ## 2. BUILD METRICS
 
+Measured from the tree on 2026-10-12. Counts are exact file counts unless marked
+approximate; re-run the commands in parentheses to refresh.
+
 | Metric | Value |
 |--------|-------|
-| Backend source | ~10,500 lines |
-| Frontend (index.html) | ~1,980 lines |
-| Display board (display.html) | ~300 lines |
-| Migration | ~810 lines |
-| Database tables | 36 |
-| Database enums | 13 |
-| API endpoints | 155 |
-| Models | 13 |
-| Services | 13 |
-| Route files | 18 |
-| Unit tests | 51 passing |
-| Stubs | 0 |
-| TODOs | 0 |
+| Frontend (`public/index.html`) | ~599 KB, ~12,200 lines (vanilla JS SPA, no build) |
+| Display board (`public/display.html`) | kiosk board, no login |
+| Migrations | 70 files (`ls project/migrations`), `20260410_001` → `20260602_001` |
+| API endpoints | ~280 route handlers across the route files (`grep -r "router\.\(get\|post\|put\|patch\|delete\)" src/routes`) |
+| Models | 17 (`ls project/src/models`) |
+| Service modules | 25 in `src/services/` + 2 storage backends in `src/services/storage/` |
+| Route files | 29 (`ls project/src/routes`) |
+| Unit test suites / tests | 10 suites, 103 tests passing (`npm run test:unit`) |
+| Integration test suites | 2 (`project/tests/integration/`, need a Postgres test DB) |
+
+Schema (tables + enums) is defined and evolved across the 70 migrations rather
+than a single file; there is no reliable single-number table count because
+tables are added and dropped across migrations. See §7 for the table groups and
+`project/migrations/` for the authoritative DDL.
 
 ---
 
 ## 3. FILE INVENTORY
 
+The repo root is a documentation wrapper; the application lives in `project/`
+(see `CLAUDE.md`). Root-level docs: `README.md` (overview + local setup),
+`CLAUDE.md` (conventions), `PROJECT_REFERENCE.md` (this file),
+`HANDOFF_PACKAGE.md` (build history + runbook), `MOBILE_APP_REFERENCE.md`,
+`TESTING.md`, `DEPLOY.md`, `DEPLOYMENT_GUIDE.md`, `PLAN.md`, and others.
+
 ```
 project/
-├── docker-compose.yml              # Postgres 16 + Redis 7 + API
-├── Dockerfile                      # Node 20 Alpine + Tesseract OCR
-├── .env.example                    # All env vars documented
-├── .dockerignore
-├── knexfile.js
-├── jest.config.js
-├── package.json
-├── package-lock.json
-├── README.md                       # Local setup guide (Docker + Ollama)
-├── TESTING.md                      # 13-section test walkthrough
+├── docker-compose.yml / docker-compose.prod.yml   # Postgres 16 + Redis 7 + API
+├── Dockerfile / Dockerfile.prod                    # Node 20 Alpine + Tesseract OCR
+├── .env.example / .env.production.example          # Documented env vars
+├── knexfile.js, jest.config.js, package.json
+├── nginx/nginx.conf, deploy.sh, backup.sh
 │
 ├── public/
-│   ├── index.html                  # Main SPA (14 pages, vanilla JS)
-│   └── display.html                # Kiosk display board (no login, auto-refresh)
+│   ├── index.html                  # Main web SPA (~599 KB, vanilla JS, no build)
+│   ├── display.html                # Kiosk display board (no login, auto-refresh)
+│   └── mobile/                      # Installable PWA (pm/shop/shell views, service worker)
 │
-├── migrations/
-│   └── 20260410_001_target_schema.js   # 36 tables + 13 enums + role + global var seeds
+├── migrations/ (70 files)          # Knex, run in filename order: 20260410_001 → 20260602_001
+│                                    # 20260410_001_target_schema.js lays the base schema;
+│                                    # later files add scheduler, email module, tickets,
+│                                    # feature flags, superadmin, saved exports, etc.
 │
 ├── seeds/
-│   └── 001_admin_user.js           # admin@company.com / ChangeMe123!
+│   ├── 001_admin_user.js           # admin@company.com / ChangeMe123!
+│   └── 002_test_data.js            # Full test dataset
 │
-├── docs/                           # Generated Word documents
-│   ├── ConstructPM_Data_Flow.docx
-│   ├── ConstructPM_Features_by_Role.docx
-│   ├── ConstructPM_Backend_Infrastructure.docx
-│   ├── ConstructPM_Cost_Analysis.docx
-│   └── ConstructPM_Notification_Breakdown.docx
+├── docs/
+│   ├── TERMINOLOGY.md              # Authoritative glossary
+│   ├── AI_SETUP.md, EXPORT_METADATA.md, MOBILE_APP_CONTRACTS.md
+│   ├── diagrams/                   # 4 system .svg diagrams + README (canonical copy)
+│   ├── FUTURE_REFINEMENTS/         # Deferred-feature design docs
+│   └── *.docx                      # Generated Word reference documents
+│
+├── mobile/                         # React Native / Expo app (screens per role)
+│
+├── templates/defaults/             # Default .docx: bid, invoice, timesheet
+│
+├── scripts/                        # setup, deploy, db-backup, test-ai-config, setup-ollama-windows.ps1
 │
 ├── src/
-│   ├── app.js                      # Express app, middleware, 18 route mounts
-│   ├── server.js                   # HTTP + WebSocket startup
+│   ├── app.js                      # Express app, middleware, route mounts (see §route list)
+│   ├── server.js                   # HTTP + Socket.IO startup
 │   │
 │   ├── config/
 │   │   ├── database.js             # Knex PostgreSQL connection
-│   │   ├── roles.js                # 5 system roles, 30+ permissions
-│   │   └── aiConfig.js             # Ollama primary, Claude fallback, confidence thresholds
+│   │   ├── roles.js                # Role + permission matrix (RBAC)
+│   │   ├── aiConfig.js             # Ollama/Claude + Tesseract/Textract routing
+│   │   └── aiPresets.js            # AI_PRESET hardware tiers
 │   │
 │   ├── middleware/
 │   │   ├── authenticate.js         # JWT verification
 │   │   ├── authorize.js            # RBAC permission checking
 │   │   └── errorHandler.js         # Global error handler
 │   │
-│   ├── models/ (13)
-│   │   ├── Bid.js                  # CRUD, bid number gen (YY-PM-Seq), stats, archive, snooze
-│   │   ├── BidQuoteLine.js         # Quote lines with locked rates, totals
-│   │   ├── Customer.js             # CRUD with billing address
-│   │   ├── CustomerContact.js      # CRUD linked to customer
-│   │   ├── Equipment.js            # CRUD, barcode lookup, checkout/return, maintenance, certs
-│   │   ├── Extraction.js           # CRUD, confirm (routes to type-specific handlers), reject
-│   │   ├── GlobalVariable.js       # Key/value store with convenience getters
-│   │   ├── Inventory.js            # Consumable materials CRUD, allocation, low stock
-│   │   ├── Location.js             # CRUD, Google Maps Distance Matrix auto-miles, union local
-│   │   ├── Project.js              # CRUD, getFinancials (real queries), assignments, close-out
-│   │   ├── ProjectNumber.js        # Multiple numbers per project, configurable generator
-│   │   ├── RateSheet.js            # CRUD, bulkUpsert (ON CONFLICT), getByLocal
-│   │   └── User.js                 # CRUD, auth, password hashing, login tracking, tab_overrides, access_config
+│   ├── models/ (17)
+│   │   Bid, BidQuoteLine, Customer, CustomerContact, Equipment, Extraction,
+│   │   FieldNote, FormTemplate, GlobalVariable, Inventory, Location,
+│   │   OilSampleRequest, Project, ProjectNumber, RateSheet, User, Vendor
 │   │
-│   ├── services/ (13)
-│   │   ├── AuditService.js         # Log all changes (table, field, old/new, who, when)
-│   │   ├── AuthService.js          # JWT access + refresh tokens
-│   │   ├── BidDocumentService.js   # Excel (ExcelJS) + Word (docxtemplater) generation
-│   │   ├── DocumentQueue.js        # File processing queue
-│   │   ├── ExportBuilder.js        # Cross-table query builder for CSV exports
-│   │   ├── ExportService.js        # CSV: QuickBooks, Procore, equipment, custom
-│   │   ├── ExtractionService.js    # OCR (Tesseract→Textract) + AI (Ollama→Claude)
-│   │   ├── FileService.js          # Folder creation, file storage, inbox→project filing
-│   │   ├── FileWatcher.js          # Polls: bid inactivity, Contract_PO empty, overdue payments
-│   │   ├── NotificationService.js  # Multi-channel (in-app, email, push), helpers
-│   │   ├── PaymentReminderService.js # Overdue detection, payment recording, close-out trigger
-│   │   ├── StorageService.js       # Local disk or S3 abstraction
-│   │   └── VendorLearning.js       # Correction tracking, prompt hint injection
+│   ├── services/ (25 modules + storage/)
+│   │   AuditService, AuthService, BidDocumentService, DocumentQueue,
+│   │   EmailComposeService, EmailTemplateService, EmailTriggerRecipientsService,
+│   │   ExportBuilder, ExportFileGenerator, ExportService, ExtractionService,
+│   │   FileService, FileWatcher, NotificationService, PODocumentService,
+│   │   PaymentReminderService, PdfStampService, SavedExportFanoutRunner,
+│   │   SavedExportRunner, StorageService, VendorLearning, WorkOrderService,
+│   │   exportMetadata, projectDates, superadminBootstrap
+│   │   └── storage/ { LocalBackend.js, S3Backend.js }
 │   │
-│   ├── routes/ (18)
-│   │   ├── admin.js        (35 endpoints) # Users, roles, rate sheet, globals, templates, inbox access, delegates, bulk import, audit, per-user access config, bid/project assignments
-│   │   ├── auth.js          (5 endpoints) # Login, refresh, logout, me (returns allowed_tabs + visibility), change password
-│   │   ├── bids.js         (14 endpoints) # CRUD, quote, generate docs, initiate-won, confirm-won, archive, snooze, hard delete
-│   │   ├── contacts.js      (4 endpoints) # CRUD for customer contacts
-│   │   ├── customers.js     (4 endpoints) # CRUD with billing address
-│   │   ├── display.js       (1 endpoint)  # Unauthenticated kiosk display board
-│   │   ├── equipment.js    (18 endpoints) # CRUD, barcode, checkout/return, maintenance, requests, display board
-│   │   ├── exports.js      (12 endpoints) # QuickBooks, Procore, equipment, custom CSV, cross-table builder (sources/preview/download)
-│   │   ├── extractions.js   (7 endpoints) # List, detail, confirm, reject, reprocess
-│   │   ├── files.js         (5 endpoints) # Bid upload, Contract_PO upload, download, activity log
-│   │   ├── financials.js    (3 endpoints) # Cross-project invoices, POs, summary
-│   │   ├── inbox.js         (3 endpoints) # Centralized upload: timesheets, invoices, purchase-orders
-│   │   ├── inventory.js    (10 endpoints) # CRUD, allocate, receive, low stock
-│   │   ├── locations.js     (6 endpoints) # CRUD, union locals list, recalculate miles
-│   │   ├── notifications.js (5 endpoints) # List, unread count, mark read, dismiss informational
-│   │   ├── projects.js     (15 endpoints) # CRUD, financials, numbers, team, close, cancel, hard delete, payments, contract type
-│   │   ├── timesheets.js    (2 endpoints) # List (group by project/worker), summary
-│   │   └── users.js         (6 endpoints) # CRUD, profile, deactivate
-│   │
-│   └── services/storage/
-│       ├── LocalBackend.js         # File operations on STORAGE_BASE_PATH
-│       └── S3Backend.js            # AWS S3 compatible storage
+│   └── routes/ (29)
+│       admin, auth, bids, contacts, customers, display, emailCompose,
+│       emailTemplates, emailTemplatesUser, equipment, equipmentTickets,
+│       exports, extractions, field-notes, files, financials, form-templates,
+│       inbox, inventory, locations, notifications, oil-samples, projects,
+│       purchase-orders, savedExports, scheduler, timesheets, users, vendors
 │
-└── tests/unit/ (51 tests, 4 suites)
-    ├── extractionService.test.js
-    ├── fileService.test.js
-    ├── roles.test.js
-    └── storageService.test.js
+└── tests/
+    ├── unit/ (10 suites, 103 tests)
+    │   aiConfig, authService, emailTemplateService, extractionService,
+    │   fileService, notificationPush, projectDates, roles, storageService,
+    │   superadminBootstrap
+    ├── integration/ (2 suites — need a Postgres test DB)
+    │   emailDay, scheduler-add-by-code
+    └── helpers/ { auth, setup, testDb }
 ```
 
 ---
@@ -387,21 +377,30 @@ Key decisions documented in conversation history. Critical ones:
 
 ---
 
-## 16. NOT BUILT
+## 16. SCOPE NOTES
+
+The original version of this doc listed the mobile app and several flows as
+"not built." They have since been built; the current tree includes a React
+Native / Expo app (`project/mobile/`), an installable PWA (`project/public/
+mobile/`), the email module, project scheduler, equipment tickets, saved
+exports, feature flags, and a superadmin tier. For the running list of known
+debt and anything still pending, see `HANDOFF_PACKAGE.md` §15.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Mobile app (React Native) | Not started | Equipment barcode scanning + quick bid. Separate project. |
-| Email/Push delivery | Built but needs config | Set EMAIL_PROVIDER + SENDGRID_API_KEY or SES_REGION. Push needs FIREBASE config. |
+| Email/Push delivery | Built; delivery needs config | Configure the email provider env vars; push needs Expo/Firebase config. |
+| Google Maps auto-miles | Optional | Works with `GOOGLE_MAPS_API_KEY`; manual miles entry otherwise. |
 
 ---
 
 ## 17. HOW TO CONTINUE DEVELOPMENT
 
-1. Upload this document to the Claude project file
-2. Download the tarball and extract
-3. Reference this doc for any questions about what exists, what's decided, and what's pending
-4. All code is in the `project/` directory
-5. Run `docker compose down -v && docker compose up --build` to test locally (wipe DB for schema changes)
-6. Frontend is a single file: `public/index.html` — no build step needed
+1. Read `CLAUDE.md` for conventions and the root-vs-`project/` boundary, then
+   this doc for what exists and why.
+2. All code is in the `project/` directory. The repo root holds only docs.
+3. From `project/`, run `docker compose down -v && docker compose up --build`
+   to test locally (the `-v` wipe is needed after schema changes).
+4. Frontend is a single file, `public/index.html` — no build step needed.
+5. Schema changes are always a new Knex migration in `project/migrations/`.
+6. Run `npm run test:unit` from `project/`; keep it green.
 7. Login: admin@company.com / ChangeMe123!
