@@ -1,67 +1,146 @@
-# ConstructPM — System Diagrams
+# ConstructPM
 
-> Four reference diagrams for onboarding and debugging. Open the `.svg`
-> files in any browser, or embed them in docs. Generated 2026-05-17.
+Self-hosted construction project management platform for a single electrical
+contracting firm (~30 mobile users, ~12 office users). Replaces SaaS tools like
+Procore and eMaint with a custom Node.js + PostgreSQL stack, a vanilla-JS web
+app, and a React Native mobile app.
 
-These exist for two situations:
-1. **Onboarding after time away** — start with `02_architecture.svg`
-   to reload the mental model of how the pieces fit.
-2. **Debugging a wrong value mid-flow** — use `01_data_pipeline.svg`
-   to find which stage to inspect, then the relevant detail diagram.
-
----
-
-## 01 — Data pipeline (`01_data_pipeline.svg`)
-
-Traces data from bid creation → quote/rate-lock → won/quick-project →
-project → scheduler → equipment ticket → archive/PDF.
-
-**The two side boxes are the trouble spots:**
-- **Rate sheet** — feeds the quote table via `RateSheet.getByLocal`
-  (fuzzy local-union match). If a bid shows $0 rates, inspect here.
-- **Financials** — invoices + POs roll up into project revenue/cost
-  by SUM over the same tables. If a project total looks wrong, the
-  bare-entry invoice/PO records are the first thing to check.
-
-Highest-leverage diagram for "this number is wrong" bugs.
-
-## 02 — Architecture (`02_architecture.svg`)
-
-The layered stack: vanilla JS SPA → Express routes → models/services
-→ PostgreSQL. The two amber boxes (feature flags, notifications) are
-**cross-cutting** — they touch every layer rather than sitting in the
-stack. That's why the tab-bleed and notification bugs were tricky:
-they don't live in one place.
-
-Best diagram for reorienting after time off.
-
-## 03 — Bid → schedule sequence (`03_bid_to_schedule_sequence.svg`)
-
-Time-ordered: PM marks won → bids route → DB inserts project +
-manpower → generates project number → fires schedule notification →
-PM clicks notification → schedule modal opens directly.
-
-The **red band** is the known failure point: when the PM edits their
-own project the schedule notification is a self-notification and may
-not surface. The notification logic itself is correct — this is why
-"I set the date and saw nothing" was not a logic bug.
-
-## 04 — Equipment ticket states (`04_equipment_ticket_states.svg`)
-
-Open → Filled → Picked up → Archived, plus the Reconfirm path.
-
-Two transitions to watch when testing the (newest) equipment code:
-- **Filled → Open**: any add/remove edit unpicks the ticket.
-- **Reconfirm**: regenerates the PDF *without* archiving — distinct
-  from the authoritative Picked up → Archived path which deletes the
-  live rows.
+**Core principle:** *minimize user input, maximize user verification.* Data
+enters via file uploads → AI extracts structured fields → users confirm via
+checkboxes → the database populates.
 
 ---
 
-## Keeping these current
+## Repository layout — read this first
 
-When a flow changes materially, regenerate the affected diagram. The
-SVGs are hand-authored (plain SVG, no build step) so they can be
-edited directly or re-requested. Handing a future session the
-architecture or pipeline diagram is a tight spec to build against and
-saves a lot of back-and-forth.
+This repository root is a **handoff wrapper**. The actual application lives in
+[`project/`](project/). The root holds only cross-cutting documentation:
+
+| Path | What it is |
+|------|------------|
+| `project/` | **The application** — backend (Express/Knex/PostgreSQL), `public/` web SPA, `mobile/` React Native app, `migrations/`, `seeds/`, `tests/`. All code lives here. |
+| `PROJECT_REFERENCE.md` | **Authoritative reference** — architecture, metrics, file inventory, schema, roles, notifications. Start here for "what exists and why." |
+| `CLAUDE.md` | Repo conventions / onboarding entry point for AI sessions and new contributors. |
+| `HANDOFF_PACKAGE.md` | Narrative handoff — build history, known debt, deployment runbook, test users. |
+| `project/docs/diagrams/` | The four system diagrams (`.svg`) + their index. |
+| `project/docs/TERMINOLOGY.md` | Authoritative glossary (Firm → Customer → Location, roles, doc types). |
+| `project/docs/FUTURE_REFINEMENTS/` | Deferred-feature design docs. |
+| `MOBILE_APP_REFERENCE.md`, `TESTING.md`, `DEPLOY.md`, etc. | Topic-specific references kept at the root. |
+
+Almost every command below is run **from inside `project/`**.
+
+---
+
+## Local setup
+
+### What you need before starting
+
+| Software | Why | Download |
+|----------|-----|----------|
+| **Docker Desktop** | Runs the database + app in containers | https://www.docker.com/products/docker-desktop/ |
+| **Ollama** | Local AI for document extraction (free) | https://ollama.com/download |
+
+Docker handles everything else (Node.js, PostgreSQL, Redis).
+
+### Step 1 — Install Docker Desktop
+
+- **Windows**: download, run the installer (accept defaults), restart when
+  prompted, open Docker Desktop and wait for **"Docker Desktop is running"**.
+  Accept WSL2 if it asks.
+- **Mac**: download, drag to Applications, open, grant permissions, wait for the
+  whale icon in the menu bar to settle.
+- **Linux**:
+  ```bash
+  curl -fsSL https://get.docker.com | sh
+  sudo usermod -aG docker $USER   # log out and back in
+  docker --version
+  ```
+
+### Step 2 — Install Ollama and pull the model
+
+```bash
+ollama pull llama3:8b   # ~4.7 GB; this is the AI extraction model
+ollama list             # should show llama3:8b
+```
+
+Ollama runs in the background after install.
+
+### Step 3 — Start the system
+
+From the `project/` folder:
+
+```bash
+docker compose up --build
+```
+
+This downloads PostgreSQL and Redis, builds the Node app container with
+Tesseract OCR, runs the Knex migrations, seeds the admin user + default config,
+and starts the server. When it is ready you'll see:
+
+```
+========================================
+  Server: http://localhost:3000
+  Login:  admin@company.com / ChangeMe123!
+========================================
+```
+
+Open **http://localhost:3000** and log in.
+
+### Step 4 — First-time setup (after login)
+
+Go to the **Admin** page and configure, in order:
+
+- **Rate Sheet** — union rates (Local + Classification + ST/OT/DT), or use
+  **Bulk Import** to upload a rate-sheet Excel/CSV and map columns.
+- **Global Variables** — `dollar_per_mile`, `home_location_address`,
+  `bid_inactivity_threshold_days`, etc.
+- **Users** — create people with email, password, name, initials, role.
+  Roles: `admin` · `project_manager` · `estimator` · `accounting` ·
+  `shop_staff` · `field_staff` (`scheduler` is a configurable role for
+  scheduling features).
+- **Templates** (optional) — upload a `.docx` per PM with `{Field Name}` merge
+  fields like `{Customer Name}`, `{Bid Amount}`, `{Location Name}`.
+
+---
+
+## Daily commands (run from `project/`)
+
+| Action | Command |
+|--------|---------|
+| Start | `docker compose up` |
+| Stop | `Ctrl+C` or `docker compose down` |
+| Rebuild after a code change | `docker compose up --build` |
+| Fresh start (wipe database) | `docker compose down -v` then `docker compose up --build` |
+| Run migrations locally | `npm run migrate` |
+| Run tests | `npm run test:unit` (unit) / `npm test` (all) |
+| Backup database | `docker exec constructpm_db pg_dump -U postgres construct_mgr > backup.sql` |
+| Restore database | `docker exec -i constructpm_db psql -U postgres construct_mgr < backup.sql` |
+
+The `-v` flag wipes the database volume — needed after destructive schema
+changes or when the DB is in a half-migrated state. File storage persists on
+disk in `project/storage/` regardless of Docker restarts.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Port 3000 in use | Change `"3000:3000"` → `"3001:3000"` in `docker-compose.yml`, open http://localhost:3001 |
+| Port 5432 in use | A local PostgreSQL is running — stop it or change the port |
+| Ollama not connecting | Ensure `ollama serve` is running. On Linux set `OLLAMA_HOST=http://172.17.0.1:11434` |
+| Slow first extraction | Normal — Ollama loads the model into memory on the first call |
+| Docker won't start (Windows) | Enable WSL2 in Docker Desktop settings |
+
+The app is reachable on your LAN at `http://YOUR_IP:3000` (find your IP with
+`ipconfig` / `ifconfig`; open port 3000 in the firewall if needed).
+
+---
+
+## Where to go next
+
+- **Understand the system** → [`PROJECT_REFERENCE.md`](PROJECT_REFERENCE.md)
+- **Conventions before editing code** → [`CLAUDE.md`](CLAUDE.md)
+- **Diagrams** → [`project/docs/diagrams/`](project/docs/diagrams/)
+- **Build history / deployment runbook / known debt** → [`HANDOFF_PACKAGE.md`](HANDOFF_PACKAGE.md)
+- **Manual test walkthrough** → [`TESTING.md`](TESTING.md)
